@@ -1,5 +1,6 @@
 import { ImageSource, Sprite } from 'excalibur';
 import type { GameData } from '../data/loader';
+import { isCommon } from '../data/types';
 
 /**
  * Sprite cache over the dumped PNGs.
@@ -9,6 +10,13 @@ import type { GameData } from '../data/loader';
  */
 /** The glyphs a counter's images stand for, in the order the counter stores them. */
 const COUNTER_GLYPHS = '0123456789-+.e';
+
+/** How many readings of one counter are worth building ahead of being asked for. */
+const MOST_READINGS = 1000;
+
+function rowKey(handles: number[], text: string): string {
+  return `${handles.join(',')}|${text}`;
+}
 
 export class SpriteStore {
   private readonly sprites = new Map<number, Sprite>();
@@ -140,6 +148,8 @@ export class SpriteStore {
   }
 
   private readonly digitRows = new Map<string, Sprite | null>();
+  /** Rows being built, so that one is not started again on every frame that asks for it. */
+  private readonly buildingRows = new Map<string, Promise<void>>();
 
   /**
    * A counter's reading drawn as a row of its own glyph images, rasterised into one sprite.
@@ -148,10 +158,54 @@ export class SpriteStore {
    * then decide how much of each glyph survives; a single image is drawn like any other.
    */
   digitRow(handles: number[], text: string): Sprite | null {
-    const key = `${handles.join(',')}|${text}`;
+    const key = rowKey(handles, text);
     const cached = this.digitRows.get(key);
     if (cached !== undefined) return cached;
 
+    // A row is rasterised into an image, and an image is not decoded on the spot. Handing back
+    // one that is not decoded yet gets it silently dropped by the renderer and complained about
+    // on the way, so nothing is handed back until it can actually be drawn: the caller draws no
+    // reading this frame and asks again on the next, which is what it already does for a glyph
+    // that has not loaded.
+    if (!this.buildingRows.has(key)) this.buildingRows.set(key, this.buildRow(key, handles, text));
+    // A row that needs nothing at all is settled before the first await inside the build.
+    return this.digitRows.get(key) ?? null;
+  }
+
+  /**
+   * Builds every reading the game's counters can show, before any of them is asked for.
+   *
+   * The readings are predictable: a counter that draws digits declares the range it clamps
+   * itself to, so the whole of what it can show is known from the game's own data. Building
+   * them up front is what keeps a counter that changes every frame, like a percentage counting
+   * up, from waiting on a decode each time it moves.
+   */
+  async warmCounters(onProgress?: (built: number, total: number) => void): Promise<void> {
+    const rows = new Map<string, { handles: number[]; text: string }>();
+    for (const object of this.data.objects.values()) {
+      const counter = isCommon(object.detail) ? object.detail.counter : null;
+      // Display type 1 is "digits"; the rest of the counters draw no glyphs.
+      if (counter?.display !== 1 || !counter.frames?.length) continue;
+      const span = counter.maximum - counter.minimum + 1;
+      // A counter with a range too wide to be worth holding is left to build as it goes.
+      if (span < 1 || span > MOST_READINGS) continue;
+      for (let value = counter.minimum; value <= counter.maximum; value++) {
+        const text = String(value);
+        rows.set(rowKey(counter.frames, text), { handles: counter.frames, text });
+      }
+    }
+
+    let built = 0;
+    const total = rows.size;
+    onProgress?.(0, total);
+    await Promise.all([...rows.values()].map(async ({ handles, text }) => {
+      this.digitRow(handles, text);
+      await this.buildingRows.get(rowKey(handles, text));
+      onProgress?.(++built, total);
+    }));
+  }
+
+  private async buildRow(key: string, handles: number[], text: string): Promise<void> {
     const glyphs: { source: ImageSource; width: number; height: number }[] = [];
     for (const glyph of text) {
       const index = COUNTER_GLYPHS.indexOf(glyph);
@@ -159,12 +213,16 @@ export class SpriteStore {
       const source = handle === undefined ? undefined : this.sources.get(handle);
       const meta = handle === undefined ? undefined : this.data.images.get(handle);
       // A glyph still loading means the whole row waits; caching a gap would keep it forever.
-      if (!source?.isLoaded() || !meta) return null;
+      if (!source?.isLoaded() || !meta) {
+        this.buildingRows.delete(key);
+        return;
+      }
       glyphs.push({ source, width: meta.width, height: meta.height });
     }
     if (!glyphs.length) {
       this.digitRows.set(key, null);
-      return null;
+      this.buildingRows.delete(key);
+      return;
     }
 
     const width = glyphs.reduce((sum, g) => sum + g.width, 0);
@@ -183,7 +241,7 @@ export class SpriteStore {
           x += glyph.width;
         }
         const source = new ImageSource(canvas.toDataURL());
-        void source.load().catch((e) => console.warn(`counter digits decode: ${e}`));
+        await source.load();
         sprite = source.toSprite();
         sprite.width = width;
         sprite.height = height;
@@ -193,7 +251,7 @@ export class SpriteStore {
     }
 
     this.digitRows.set(key, sprite);
-    return sprite;
+    this.buildingRows.delete(key);
   }
 
   sprite(handle: number): Sprite | null {
