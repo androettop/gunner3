@@ -45,8 +45,12 @@ export interface TouchButton {
   /**
    * Struck in turn, one per tap, instead of `keys`. `-1` walks the list backwards. This is how
    * a pair of arrows cycles a game whose own controls are one key per weapon.
+   *
+   * `owned` names, per key, an object of the game's whose reading says whether that key is worth
+   * striking; an empty name is one that always is. Keys that are not owned are stepped over, so
+   * the arrows walk what the player is carrying rather than the whole list.
    */
-  cycle?: { keys: KeyCode[]; step: 1 | -1 };
+  cycle?: { keys: KeyCode[]; step: 1 | -1; owned?: string[] };
   /** Works the page instead of the game. */
   action?: TouchAction;
   /**
@@ -115,13 +119,20 @@ export const DEFAULT_CHROME: TouchButton[] = [
     pin: { corner: 'top-left' }, size: CHROME_SIZE },
 ];
 
-/** Gunner 3 reads one key per weapon, in this order, so a pair of arrows walks the list. */
+/**
+ * Gunner 3 reads one key per weapon, in this order, so a pair of arrows walks the list.
+ *
+ * The game keeps a counter per weapon saying whether it has been picked up, and none for the
+ * first, which the Gunner starts with. Those counters are what the arrows walk by.
+ */
 const WEAPON_KEYS: KeyCode[] = [
   'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9',
   'Digit0',
   'KeyQ', 'KeyW', 'KeyE', 'KeyR', 'KeyT', 'KeyY', 'KeyU', 'KeyI', 'KeyO', 'KeyP',
   'KeyA', 'KeyS',
 ];
+
+const WEAPON_OWNED = WEAPON_KEYS.map((_, at) => (at === 0 ? '' : `Gun Get ${at + 1}`));
 
 /**
  * Gunner 3's own controls, as this game plays them.
@@ -155,10 +166,12 @@ export const DEFAULT_LAYOUTS: TouchLayout[] = [
         pin: { corner: 'bottom-right', row: 1 }, size: 0.82 },
       { id: 'jump', keys: ['ShiftLeft'], icon: { kind: 'sprite', image: 24 },
         pin: { corner: 'bottom-right', row: 1 }, size: 1 },
-      { id: 'weapon-previous', keys: [], cycle: { keys: WEAPON_KEYS, step: -1 },
-        icon: { kind: 'triangle', towards: 'left' }, pin: { corner: 'top-right' }, size: 0.58 },
-      { id: 'weapon-next', keys: [], cycle: { keys: WEAPON_KEYS, step: 1 },
-        icon: { kind: 'triangle', towards: 'right' }, pin: { corner: 'top-right' }, size: 0.58 },
+      { id: 'weapon-previous', keys: [], icon: { kind: 'triangle', towards: 'left' },
+        cycle: { keys: WEAPON_KEYS, step: -1, owned: WEAPON_OWNED },
+        pin: { corner: 'top-right' }, size: 0.58 },
+      { id: 'weapon-next', keys: [], icon: { kind: 'triangle', towards: 'right' },
+        cycle: { keys: WEAPON_KEYS, step: 1, owned: WEAPON_OWNED },
+        pin: { corner: 'top-right' }, size: 0.58 },
     ],
   },
   {

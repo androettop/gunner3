@@ -32,7 +32,9 @@ import { Preloader } from './runtime/preloader';
 import { FrameScene } from './runtime/scene';
 import { SpriteStore } from './runtime/sprites';
 import { DEFAULT_CHROME, DEFAULT_LAYOUTS, type TouchLayout } from './runtime/touch/layout';
-import { ControlOverlay, type Shell, silhouetteFrom } from './runtime/touch/overlay';
+import {
+  ControlOverlay, type Reading, type Shell, silhouetteFrom,
+} from './runtime/touch/overlay';
 
 export interface PlayOptions {
   /** The package to play: a URL to fetch it from, or the bytes of one already in hand. */
@@ -160,11 +162,22 @@ export async function play(options: PlayOptions): Promise<Game> {
   if (!layouts) engine.screen.viewport = { ...engine.screen.resolution };
   engine.screen.applyResolutionAndViewport();
 
+  // What a control asks the game, which is one counter's reading at a time. The frame it reads
+  // is whichever one is playing, so a control asks about the game as it stands.
+  const named = new Map([...data.objects.values()].map((object) => [object.name, object.id]));
+  const reading: Reading = (name) => {
+    const id = named.get(name);
+    if (id === undefined) return null;
+    const instance = current?.byObject.get(id)?.[0];
+    return instance ? instance.values[0] : null;
+  };
+
   overlay = new ControlOverlay(
     layouts ?? [],
     DEFAULT_CHROME,
     (handle) => silhouetteFrom(sprites.source(handle)),
     shellFor(engine, layouts !== null),
+    reading,
   );
 
   // Browsers hold audio until the page has been interacted with.

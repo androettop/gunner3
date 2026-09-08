@@ -12,6 +12,15 @@ const CORNERS: TouchCorner[] = ['top-left', 'top-right', 'bottom-left', 'bottom-
  * The overlay does not know what a display mode is or how a browser goes fullscreen; it knows
  * that a button was pressed and hands that on.
  */
+/**
+ * What the game is holding, for the controls that need to know.
+ *
+ * Reading an object of the game's by name rather than by handle keeps a layout legible, and
+ * keeps the overlay out of the business of knowing what any of it means: it asks for a number
+ * and steps over the keys whose number is zero.
+ */
+export type Reading = (objectName: string) => number | null;
+
 export interface Shell {
   isFullscreen(): boolean;
   toggleFullscreen(): Promise<void>;
@@ -55,6 +64,7 @@ export class ControlOverlay {
     private readonly chrome: TouchButton[],
     private readonly silhouette: (handle: number) => string | null,
     private readonly shell: Shell,
+    private readonly reading: Reading = () => null,
   ) {
     this.layouts = layouts;
     this.root = document.createElement('div');
@@ -223,11 +233,12 @@ export class ControlOverlay {
       } else if (button.cycle) {
         // A cycle keeps its own place in the list: the game selects a weapon by its own key and
         // never says which one it has, so the arrows walk the list rather than follow the game.
-        const { keys, step } = button.cycle;
-        const list = keys.join(',');
-        const cursor = ((this.cycles.get(list) ?? 0) + step + keys.length) % keys.length;
-        this.cycles.set(list, cursor);
-        this.strike(keys[cursor]);
+        const list = button.cycle.keys.join(',');
+        const cursor = this.step(button.cycle, this.cycles.get(list) ?? 0);
+        if (cursor !== null) {
+          this.cycles.set(list, cursor);
+          this.strike(button.cycle.keys[cursor]);
+        }
       } else if (button.tap) {
         for (const key of button.keys) this.strike(key);
       } else {
@@ -311,6 +322,20 @@ export class ControlOverlay {
     }
     svg.append(path);
     return svg;
+  }
+
+  /**
+   * The next place in a cycle that is worth striking, stepping over everything the game says it
+   * has not got. Null when it has none of them, which cannot happen while it has one.
+   */
+  private step(cycle: NonNullable<TouchButton['cycle']>, from: number): number | null {
+    const { keys, step, owned } = cycle;
+    for (let moved = 1; moved <= keys.length; moved++) {
+      const at = ((from + step * moved) % keys.length + keys.length) % keys.length;
+      const name = owned?.[at];
+      if (!name || (this.reading(name) ?? 0) > 0) return at;
+    }
+    return null;
   }
 
   /** One press and release, for the things the game counts rather than reads. */
