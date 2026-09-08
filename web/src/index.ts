@@ -253,9 +253,9 @@ function shellFor(engine: Engine, touch: boolean): Shell {
           return;
         }
         await document.documentElement.requestFullscreen();
-        // A phone playing by thumb is held one way up; a browser that will not be told so
-        // simply stays as it was.
-        if (touch) await lockPortrait();
+        // The game is drawn wider than it is tall, so a phone playing it is turned on its side.
+        // A browser that will not be told so simply stays as it was.
+        if (touch) await lockLandscape();
       } catch (e) {
         console.warn(`fullscreen: ${e}`);
       }
@@ -263,12 +263,12 @@ function shellFor(engine: Engine, touch: boolean): Shell {
   };
 }
 
-async function lockPortrait(): Promise<void> {
+async function lockLandscape(): Promise<void> {
   const orientation = window.screen.orientation as ScreenOrientation & {
     lock?: (to: string) => Promise<void>;
   };
   try {
-    await orientation.lock?.('portrait');
+    await orientation.lock?.('landscape');
   } catch {
     // Locking is refused on a desktop and by some phones; the game plays either way.
   }
