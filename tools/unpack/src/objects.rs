@@ -207,6 +207,10 @@ pub struct Counter {
     pub initial: i32,
     pub minimum: i32,
     pub maximum: i32,
+    pub display: u32,
+    pub width: u16,
+    pub height: u16,
+    pub frames: Vec<u16>,
 }
 
 /// A backdrop's properties, and a quick backdrop's, which add a shape to them.
@@ -287,18 +291,38 @@ pub fn read_backdrop(data: &[u8], quick: bool) -> Option<Backdrop> {
     })
 }
 
-/// The counter's reading and the range it is held to.
+/// The counter's reading, the range it is held to, and how it draws itself.
+///
+/// The reading and the range are all a counter that only feeds expressions needs, and that is
+/// where the block stops for most of them. One that draws itself carries how, and the images it
+/// draws with: display 0 is hidden, 1 a row of digit images, 2 and 3 bars, 4 an animation and
+/// 5 text, and the frames are one image per glyph in the order 0-9 then the sign and the point.
+/// A save slot's "LEVEL: 0" is a counter of the first kind, so dropping this leaves the
+/// load screen showing its labels and no numbers.
 pub fn read_counter(data: &[u8]) -> Option<Counter> {
     let base = word(data, COUNTER_OFFSET)? as usize;
     if base == 0 {
         return None;
     }
+    let count = word(data, base + FRAME_COUNT).unwrap_or(0) as usize;
     Some(Counter {
         initial: long(data, base + 2)? as i32,
         minimum: long(data, base + 6)? as i32,
         maximum: long(data, base + 10)? as i32,
+        display: long(data, base + DISPLAY).unwrap_or(0),
+        width: word(data, base + WIDTH).unwrap_or(0),
+        height: word(data, base + HEIGHT).unwrap_or(0),
+        frames: (0..count)
+            .filter_map(|i| word(data, base + FRAME_COUNT + 2 + i * 2))
+            .collect(),
     })
 }
+
+/// Where the drawing settings sit inside the counter block, past the reading and the range.
+const WIDTH: usize = 18;
+const HEIGHT: usize = 20;
+const DISPLAY: usize = 24;
+const FRAME_COUNT: usize = 28;
 
 /// One movement per object here, so the section's own kind is the movement's.
 pub fn read_movements(data: &[u8]) -> Vec<Movement> {
