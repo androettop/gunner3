@@ -1,5 +1,10 @@
 import type { ImageSource } from 'excalibur';
-import type { KeyCode, TouchButton, TouchIcon, TouchLayout, TouchSteering } from './layout';
+import type {
+  KeyCode, TouchButton, TouchCorner, TouchIcon, TouchLayout, TouchSteering,
+} from './layout';
+
+/** The corners a button can be pinned to, in the order their stacks are built. */
+const CORNERS: TouchCorner[] = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
 
 /**
  * The parts of the page a button can work, as opposed to the parts of the game.
@@ -83,14 +88,30 @@ export class ControlOverlay {
     const layout = this.layouts.find((l) => l.frames.includes(frame));
     if (layout?.steering) this.root.append(this.steeringPad(layout.steering));
 
-    // The chrome is a row in the corner rather than a set of places on the screen: two buttons
-    // that belong together should sit together, on a phone and on a monitor alike.
-    const chrome = document.createElement('div');
-    chrome.className = 'fusion-touch-chrome';
-    for (const button of this.chrome) chrome.append(this.button(button, true));
-    this.root.append(chrome);
+    // A pinned button goes in its corner rather than at a place of its own, so that everything
+    // in a corner is the same distance from its neighbours as it is from the edge.
+    const buttons = [...this.chrome, ...(layout?.buttons ?? [])];
+    for (const corner of CORNERS) {
+      const pinned = buttons.filter((b) => b.pin?.corner === corner);
+      if (pinned.length === 0) continue;
 
-    for (const button of layout?.buttons ?? []) this.root.append(this.button(button));
+      const stack = document.createElement('div');
+      stack.className = `fusion-touch-corner at-${corner}`;
+      // Rows read down the screen whichever corner they are in, so row zero is the upper one
+      // and the corner decides only which edge the stack as a whole is held against.
+      const rows = [...new Set(pinned.map((b) => b.pin?.row ?? 0))].sort((a, b) => a - b);
+      for (const index of rows) {
+        const row = document.createElement('div');
+        row.className = 'fusion-touch-corner-row';
+        for (const button of pinned.filter((b) => (b.pin?.row ?? 0) === index)) {
+          row.append(this.button(button, true));
+        }
+        stack.append(row);
+      }
+      this.root.append(stack);
+    }
+
+    for (const button of buttons) if (!button.pin) this.root.append(this.button(button));
     this.place();
   }
 
@@ -180,8 +201,8 @@ export class ControlOverlay {
     // The size is a share of the largest a button may be, and the position is clamped so that
     // whatever the layout asks for, the button stays a padded distance inside the screen.
     element.style.setProperty('--asked', `calc(var(--button) * ${button.size})`);
-    element.style.setProperty('--x', `${button.x * 100}%`);
-    element.style.setProperty('--y', `${button.y * 100}%`);
+    element.style.setProperty('--x', `${(button.x ?? 0) * 100}%`);
+    element.style.setProperty('--y', `${(button.y ?? 0) * 100}%`);
     element.append(this.icon(button.icon));
 
     element.addEventListener('pointerdown', (e) => {
@@ -359,8 +380,9 @@ function style(): HTMLStyleElement {
   --gap: 16px;
   --cap: 60px;
 }
-/* The row is a place to put buttons, not a surface: only the buttons in it take a touch. */
-.fusion-touch-chrome {
+/* A corner is a place to put buttons, not a surface: only the buttons in it take a touch. */
+.fusion-touch-corner,
+.fusion-touch-corner-row {
   pointer-events: none;
 }
 .fusion-touch-pad {
@@ -382,12 +404,31 @@ function style(): HTMLStyleElement {
   transform: none;
 }
 .fusion-touch-button.is-chrome.is-down { transform: scale(0.94); }
-.fusion-touch-chrome {
+/* A corner holds rows of buttons, spaced from each other and from the edges by the one measure
+   everything on the overlay is spaced by. */
+.fusion-touch-corner {
   position: absolute;
-  left: var(--gap);
-  top: var(--gap);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+.fusion-touch-corner-row {
   display: flex;
   gap: var(--gap);
+  /* Buttons of different sizes in one row stand on the same line. */
+  align-items: flex-end;
+}
+.fusion-touch-corner.at-top-left { left: var(--gap); top: var(--gap); align-items: flex-start; }
+.fusion-touch-corner.at-top-right { right: var(--gap); top: var(--gap); align-items: flex-end; }
+.fusion-touch-corner.at-bottom-left {
+  left: var(--gap);
+  bottom: var(--gap);
+  align-items: flex-start;
+}
+.fusion-touch-corner.at-bottom-right {
+  right: var(--gap);
+  bottom: var(--gap);
+  align-items: flex-end;
 }
 .fusion-touch-button.is-chrome {
   position: relative;

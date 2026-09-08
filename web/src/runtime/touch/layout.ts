@@ -31,6 +31,8 @@ export type TouchIcon =
 /** What a button does to the page rather than to the game. */
 export type TouchAction = 'fullscreen' | 'display-mode';
 
+export type TouchCorner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+
 export interface TouchButton {
   id: string;
   /** Held down for as long as the button is, or struck once if `tap` is set. */
@@ -47,14 +49,21 @@ export interface TouchButton {
   cycle?: { keys: KeyCode[]; step: 1 | -1 };
   /** Works the page instead of the game. */
   action?: TouchAction;
+  /**
+   * Put in a corner instead of at a place of its own. Buttons pinned to the same corner and row
+   * sit side by side, rows stack away from that corner, and every space between them and every
+   * distance to the edge is the one measure the controls are spaced by. `x` and `y` are not
+   * read for a pinned button.
+   */
+  pin?: { corner: TouchCorner; row?: number };
   icon: TouchIcon;
   /**
    * Centre of the button, as a fraction of the screen: 0 is left/top, 1 is right/bottom. A
    * button is held clear of the edges whatever this says, so a corner button is in the corner
    * rather than half off the screen.
    */
-  x: number;
-  y: number;
+  x?: number;
+  y?: number;
   /**
    * Diameter, as a fraction of the largest a button may be. That largest is a quarter of the
    * screen's height or a sixth of its width, whichever is smaller, so a button is round, big
@@ -87,6 +96,9 @@ export interface TouchLayout {
   buttons: TouchButton[];
 }
 
+/** The size the buttons in a corner row are drawn at, so that a row is of a piece. */
+const CHROME_SIZE = 0.45;
+
 /**
  * The buttons that are up on every frame of every game, whether or not it is being played by
  * touch.
@@ -98,9 +110,9 @@ export interface TouchLayout {
  */
 export const DEFAULT_CHROME: TouchButton[] = [
   { id: 'fullscreen', keys: [], action: 'fullscreen', icon: { kind: 'fullscreen' },
-    x: 0, y: 0, size: 0.45 },
+    pin: { corner: 'top-left' }, size: CHROME_SIZE },
   { id: 'display-mode', keys: [], action: 'display-mode', icon: { kind: 'display-mode' },
-    x: 0, y: 0, size: 0.45 },
+    pin: { corner: 'top-left' }, size: CHROME_SIZE },
 ];
 
 /** Gunner 3 reads one key per weapon, in this order, so a pair of arrows walks the list. */
@@ -135,25 +147,27 @@ export const DEFAULT_LAYOUTS: TouchLayout[] = [
       down: ['ArrowDown'],
     },
     buttons: [
+      // Firing above jumping, and rolling beside it: the hand that jumps is the hand that
+      // rolls, and the thumb travels the shortest way between them.
       { id: 'shoot', keys: ['ControlLeft'], icon: { kind: 'sprite', image: 277 },
-        x: 0.9, y: 0.52, size: 1 },
-      { id: 'jump', keys: ['ShiftLeft'], icon: { kind: 'sprite', image: 24 },
-        x: 0.9, y: 0.84, size: 1 },
+        pin: { corner: 'bottom-right', row: 0 }, size: 1 },
       { id: 'roll', keys: ['KeyZ'], icon: { kind: 'sprite', image: 2017 },
-        x: 0.66, y: 0.87, size: 0.82 },
+        pin: { corner: 'bottom-right', row: 1 }, size: 0.82 },
+      { id: 'jump', keys: ['ShiftLeft'], icon: { kind: 'sprite', image: 24 },
+        pin: { corner: 'bottom-right', row: 1 }, size: 1 },
       { id: 'weapon-previous', keys: [], cycle: { keys: WEAPON_KEYS, step: -1 },
-        icon: { kind: 'triangle', towards: 'left' }, x: 0.78, y: 0.12, size: 0.58 },
+        icon: { kind: 'triangle', towards: 'left' }, pin: { corner: 'top-right' }, size: 0.58 },
       { id: 'weapon-next', keys: [], cycle: { keys: WEAPON_KEYS, step: 1 },
-        icon: { kind: 'triangle', towards: 'right' }, x: 0.92, y: 0.12, size: 0.58 },
+        icon: { kind: 'triangle', towards: 'right' }, pin: { corner: 'top-right' }, size: 0.58 },
     ],
   },
   {
-    // The load screen leaves by the same key a keyboard leaves it by, from the corner a level
-    // keeps its weapon arrows in.
+    // The load screen leaves by the same key a keyboard leaves it by, from the corner opposite
+    // the buttons that are always up and drawn to match them.
     frames: [2],
     buttons: [
       { id: 'back', keys: ['Escape'], tap: true, icon: { kind: 'caret', towards: 'left' },
-        x: 0.92, y: 0.12, size: 0.58 },
+        pin: { corner: 'top-right' }, size: CHROME_SIZE },
     ],
   },
 ];
