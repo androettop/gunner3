@@ -10,8 +10,10 @@ reimplemented from reverse engineering, drawing on
 |---|---|
 | ![The main menu](docs/screenshots/title.png) | ![The first level](docs/screenshots/level.png) |
 
-**[Play it here.](https://androettop.github.io/gunner3/)** That demo is built from the latest
-commit on `main`, the same way a build on your own machine is.
+**[Play it here](https://androettop.github.io/gunner3/)**, or
+**[on a phone](https://androettop.github.io/gunner3/?touch=true)**, which is the same page asked
+for with its touch controls up. That demo is built from the latest commit on `main`, the same
+way a build on your own machine is.
 
 What this is after is the original experience on other platforms, the web first, on
 [Excalibur.js](https://excaliburjs.com/), though nothing about the approach is tied to it. The
@@ -82,6 +84,41 @@ runtime that interprets it.
 
 The page is the canvas and nothing else, on black. The loading screen is drawn on that canvas by
 the runtime, and names the game as its package gives it.
+
+## Playing it with a thumb
+
+Asked for as `?touch=true`, the game comes up with controls over it and fitted to the screen.
+
+The game is played by keyboard: its own event tables ask whether a key is down. So the controls
+are HTML over the page, and what they produce is `keydown` and `keyup` on the window, which is
+where Excalibur listens. Nothing in the game knows it is being played by touch, and a layout is
+a description of which keys a thumb can reach rather than a change to the game.
+
+| Control | Where | Key |
+|---|---|---|
+| Steering | the whole left half, with nothing drawn on it | the arrow keys |
+| Shoot | right, above the other two | `Ctrl` |
+| Jump | bottom right | `Shift` |
+| Roll | beside jump | `Z` |
+| Previous and next weapon | top right | one key per weapon, in the game's own order |
+| Back | top right, on the load screen | `Escape` |
+
+Steering reads where the finger has moved to rather than where it landed, and only once it has
+left a deadzone, so a thumb resting on the glass is a thumb standing still. Jump, shoot and roll
+wear silhouettes of the game's own sprites, taken from the sprite bank as it is loaded, so the
+buttons show the game's drawing of what they do; nothing of the game is copied into the runtime
+to draw them.
+
+A layout is data: round buttons and at most one steering area, each either pinned to a corner or
+placed as a fraction of the screen, and each layout names the frames it is for. The default is
+`web/src/runtime/touch/layout.ts`, and this game's gives its eight levels the whole set, its
+load screen a way back out, and its menus nothing at all. Another game is another list, which
+`play({ touch: [...] })` takes in place of it.
+
+The two buttons in the top corner are up whether or not there are controls, since fitting the
+game to the screen belongs to the page rather than to the game: one fills the screen, and the
+other moves between the game's own size and as large as fits. Both keep the whole picture and
+its shape.
 
 `./tools/package.sh --single-file` writes one HTML file instead, library and package inside it
 as data URLs, which runs straight off the file system. A page that fetches a package beside it
