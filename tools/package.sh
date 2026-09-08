@@ -8,6 +8,10 @@
 # no game of its own: what comes out of here is the only place the two meet, and it is built
 # from a copy you already have. Without a path, tools/fetch-game.sh supplies one.
 #
+# The game's music is MIDI, so a package also carries the instruments to play it with: the part
+# of a General MIDI bank the game reaches, cut out of the one tools/fetch-soundfont.sh fetches.
+# $SOUNDFONT points at a bank you already have instead.
+#
 # Needs Rust and Node. The game is read by tools/unpack, which is this repository's own.
 #
 # The output has to be served over HTTP: a page opened from the file system cannot fetch its
@@ -47,12 +51,20 @@ if [ ! -f "$GAME" ]; then
   exit 1
 fi
 
+if [ -z "${SOUNDFONT:-}" ]; then
+  "$REPO_ROOT/tools/fetch-soundfont.sh"
+  SOUNDFONT="$REPO_ROOT/game/GeneralUserGS.sf3"
+fi
+
 echo "==> Reading $GAME"
 cargo build --release --quiet --manifest-path "$REPO_ROOT/tools/unpack/Cargo.toml"
 "$REPO_ROOT/tools/unpack/target/release/unpack" "$GAME" "$STAGE/game.zip"
 
 cd "$REPO_ROOT/web"
 [ -d node_modules ] || npm install --silent
+
+echo "==> Cutting the soundfont down to the game"
+node scripts/add-soundfont.mjs --package "$STAGE/game.zip" --soundfont "$SOUNDFONT"
 
 # The page's title comes from the game's own name, which is in the package; the opcode coverage
 # check reads the same package, so the build is verified against the game it is being made for.

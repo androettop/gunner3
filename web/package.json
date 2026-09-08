@@ -26,7 +26,8 @@
   },
   "dependencies": {
     "excalibur": "^0.30.3",
-    "fflate": "^0.8.3"
+    "fflate": "^0.8.3",
+    "spessasynth_core": "^4.3.22"
   },
   "devDependencies": {
     "esbuild": "^0.28.2",

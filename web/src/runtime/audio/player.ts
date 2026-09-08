@@ -1,21 +1,19 @@
 import type { GameData } from '../../data/loader';
-import { parseMidi, type MidiFile, type Note } from './midi';
+import { MusicSynth } from './synth';
 
 /**
  * Sound effects and music.
  *
- * Samples are WAVs and play straight through WebAudio. Music is MIDI, which browsers cannot
- * play, so each track is synthesised once into an AudioBuffer the first time it is asked for
- * and then reused. The synthesis is a small subtractive voice per note rather than a General
- * MIDI soundfont, so the music is a recognisable rendition of the original score, not a
- * faithful reproduction of how it sounded on a 2000-era wavetable card.
+ * The sounds are the game's own WAVs and play straight through WebAudio. The music is MIDI,
+ * which browsers cannot play, so the runtime carries a synthesiser and a General MIDI soundfont
+ * cut down to what this game asks for, and the score is played the way the original played it:
+ * note by note, as it goes.
  */
 export class AudioBank {
   private context: AudioContext | null = null;
   private readonly samples = new Map<number, AudioBuffer>();
-  private readonly scores = new Map<number, MidiFile>();
-  private readonly rendered = new Map<number, AudioBuffer>();
-  private music: AudioBufferSourceNode | null = null;
+  private readonly scores = new Map<number, ArrayBuffer>();
+  private synth: MusicSynth | null = null;
   private masterGain: GainNode | null = null;
 
   constructor(private readonly data: GameData) {}
@@ -41,13 +39,24 @@ export class AudioBank {
     this.ensureContext();
   }
 
-  /** Fetches and decodes every sample, and parses every score. */
+  /**
+   * Decodes every sound, takes the scores as they are, and puts the synthesiser up.
+   *
+   * The scores are bytes until they are played: parsing one costs nothing next to the
+   * soundfont, and the worklet is where it has to happen anyway.
+   */
   async load(onProgress?: (loaded: number, total: number) => void): Promise<void> {
     const context = this.ensureContext();
     const sounds = [...this.data.sounds.values()];
     const tracks = [...this.data.music.values()];
-    const total = sounds.length + tracks.length;
+    // The soundfont is the last thing counted, and by far the largest.
+    const total = sounds.length + tracks.length + 1;
     let loaded = 0;
+
+    for (const track of tracks) {
+      this.scores.set(track.handle, this.data.musicBytes(track));
+      onProgress?.(++loaded, total);
+    }
 
     await Promise.all([
       ...sounds.map(async (sound) => {
@@ -59,14 +68,18 @@ export class AudioBank {
         }
         onProgress?.(++loaded, total);
       }),
-      ...tracks.map(async (track) => {
+      (async () => {
         try {
-          this.scores.set(track.handle, parseMidi(this.data.musicBytes(track)));
+          if (context && this.masterGain && this.data.hasSoundfont) {
+            const synth = new MusicSynth(context, this.masterGain);
+            await synth.start(this.data.soundfontBytes());
+            this.synth = synth;
+          }
         } catch (e) {
-          console.warn(`music ${track.handle} (${track.name}): ${e}`);
+          console.warn(`music: ${e}`);
         }
         onProgress?.(++loaded, total);
-      }),
+      })(),
     ]);
   }
 
@@ -80,121 +93,14 @@ export class AudioBank {
     source.start();
   }
 
-  async playMusic(handle: number, loop: boolean): Promise<void> {
-    const context = this.ensureContext();
-    if (!context || !this.masterGain) return;
-
-    const buffer = await this.renderScore(handle);
-    if (!buffer) return;
-
-    this.stopMusic();
-    const source = context.createBufferSource();
-    source.buffer = buffer;
-    source.loop = loop;
-    source.connect(this.masterGain);
-    source.start();
-    this.music = source;
+  playMusic(handle: number, loop: boolean): void {
+    this.ensureContext();
+    const score = this.scores.get(handle);
+    if (!this.synth || !score) return;
+    this.synth.play(score, loop);
   }
 
   stopMusic(): void {
-    if (!this.music) return;
-    try { this.music.stop(); } catch { /* already ended */ }
-    this.music.disconnect();
-    this.music = null;
+    this.synth?.stop();
   }
-
-  private async renderScore(handle: number): Promise<AudioBuffer | null> {
-    const cached = this.rendered.get(handle);
-    if (cached) return cached;
-
-    const score = this.scores.get(handle);
-    const context = this.context;
-    if (!score || !context || !score.notes.length) return null;
-
-    const sampleRate = 22050; // Plenty for these voices, and a quarter the memory of 44.1k.
-    const seconds = Math.min(score.duration + 1, 180);
-    const offline = new OfflineAudioContext(1, Math.ceil(seconds * sampleRate), sampleRate);
-
-    const master = offline.createGain();
-    // Scale down with polyphony so dense passages do not clip.
-    master.gain.value = 0.5 / Math.max(1, Math.sqrt(maxPolyphony(score.notes)));
-    master.connect(offline.destination);
-
-    for (const note of score.notes) {
-      if (note.start > seconds) continue;
-      renderNote(offline, master, note);
-    }
-
-    try {
-      const buffer = await offline.startRendering();
-      this.rendered.set(handle, buffer);
-      return buffer;
-    } catch (e) {
-      console.warn(`music ${handle} render failed: ${e}`);
-      return null;
-    }
-  }
-}
-
-/** MIDI note number to frequency, A440. */
-function frequency(pitch: number): number {
-  return 440 * Math.pow(2, (pitch - 69) / 12);
-}
-
-function maxPolyphony(notes: Note[]): number {
-  // Approximate: the densest one-second window.
-  const buckets = new Map<number, number>();
-  for (const note of notes) {
-    const bucket = Math.floor(note.start);
-    buckets.set(bucket, (buckets.get(bucket) ?? 0) + 1);
-  }
-  let peak = 1;
-  for (const count of buckets.values()) peak = Math.max(peak, count);
-  return peak;
-}
-
-function renderNote(context: OfflineAudioContext, destination: GainNode, note: Note): void {
-  const gain = context.createGain();
-  gain.connect(destination);
-
-  const level = (note.velocity / 127) * 0.35;
-  const attack = 0.008;
-  const release = Math.min(0.12, note.duration * 0.5);
-  const end = note.start + note.duration;
-
-  gain.gain.setValueAtTime(0, note.start);
-  gain.gain.linearRampToValueAtTime(level, note.start + attack);
-  gain.gain.setValueAtTime(level, Math.max(note.start + attack, end - release));
-  gain.gain.linearRampToValueAtTime(0, end);
-
-  // Channel 10 is percussion: pitch carries no melody there, so use a short noise burst.
-  if (note.channel === 9) {
-    const length = Math.max(1, Math.floor(context.sampleRate * Math.min(note.duration, 0.2)));
-    const buffer = context.createBuffer(1, length, context.sampleRate);
-    const samples = buffer.getChannelData(0);
-    for (let i = 0; i < length; i++) samples[i] = (Math.random() * 2 - 1) * (1 - i / length);
-    const source = context.createBufferSource();
-    source.buffer = buffer;
-    source.connect(gain);
-    source.start(note.start);
-    return;
-  }
-
-  const oscillator = context.createOscillator();
-  oscillator.type = waveFor(note.program);
-  oscillator.frequency.value = frequency(note.pitch);
-  oscillator.connect(gain);
-  oscillator.start(note.start);
-  oscillator.stop(end + 0.02);
-}
-
-/** A coarse mapping from General MIDI families to oscillator shapes. */
-function waveFor(program: number): OscillatorType {
-  if (program < 8) return 'triangle';    // pianos
-  if (program < 24) return 'sine';       // chromatic percussion, organs
-  if (program < 40) return 'sawtooth';   // guitars, basses
-  if (program < 56) return 'sawtooth';   // strings
-  if (program < 80) return 'square';     // brass, reeds, pipes
-  if (program < 96) return 'square';     // synth leads
-  return 'triangle';
 }
