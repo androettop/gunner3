@@ -10,6 +10,9 @@ reimplemented from reverse engineering, drawing on
 |---|---|
 | ![The main menu](docs/screenshots/title.png) | ![The first level](docs/screenshots/level.png) |
 
+**[Play it here.](https://androettop.github.io/gunner3/)** That demo is built from the latest
+commit on `main`, the same way a build on your own machine is.
+
 What this is after is the original experience on other platforms, the web first, on
 [Excalibur.js](https://excaliburjs.com/), though nothing about the approach is tied to it. The
 game is not rewritten as new code: its own event tables are interpreted as they stand, so a port
@@ -77,7 +80,8 @@ the runtime, and names the game as its package gives it.
 as data URLs, which runs straight off the file system. A page that fetches a package beside it
 cannot, because the browser counts that as cross-origin.
 
-`.github/workflows/build.yml` does all of this on every push, caching the download.
+`.github/workflows/build.yml` does all of this on every push, caching the download, and
+publishes the result to GitHub Pages as the demo above.
 
 ### Working on the runtime
 
