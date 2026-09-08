@@ -3,6 +3,9 @@ import type {
 } from './types';
 import type { GamePackage } from './package';
 
+/** Where the packaging step puts the soundfont. */
+const SOUNDFONT = 'soundfont.sf3';
+
 /** The manifest plus the lookup tables the runtime needs, loaded once at startup. */
 export class GameData {
   readonly manifest: GameManifest;
@@ -56,6 +59,16 @@ export class GameData {
 
   musicBytes(track: MusicDef): ArrayBuffer {
     return this.pkg.buffer(`music/${track.file}`);
+  }
+
+  /** A package made without one plays the game without music rather than not at all. */
+  get hasSoundfont(): boolean {
+    return this.pkg.has(SOUNDFONT);
+  }
+
+  /** The instruments the music is played with: one General MIDI bank, cut to this game. */
+  soundfontBytes(): ArrayBuffer {
+    return this.pkg.buffer(SOUNDFONT);
   }
 
   /** Resolves a "jump to frame" parameter to a frame index. */
