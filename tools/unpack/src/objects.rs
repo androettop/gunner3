@@ -200,7 +200,26 @@ pub struct Paragraph {
 
 pub struct Movement {
     pub kind: u16,
+    /// Which player drives it, for the kinds that take a controller; zero for the rest.
+    pub player: u16,
     pub starting_direction: u32,
+    /// The settings the movement's own kind gives it, named as the runtime asks for them.
+    pub values: Vec<(&'static str, i64)>,
+    /// A path movement's nodes, in order; empty for every other kind.
+    pub nodes: Vec<PathNode>,
+}
+
+/// One leg of a path: how far it goes, how fast, and how long to wait at the end of it.
+#[derive(Clone, Copy)]
+pub struct PathNode {
+    pub speed: u8,
+    pub direction: u8,
+    pub dx: i16,
+    pub dy: i16,
+    pub cos: i16,
+    pub sin: i16,
+    pub length: u16,
+    pub pause: u16,
 }
 
 pub struct Counter {
@@ -325,16 +344,85 @@ const DISPLAY: usize = 24;
 const FRAME_COUNT: usize = 28;
 
 /// One movement per object here, so the section's own kind is the movement's.
+///
+/// Twelve bytes of header, then the settings the kind calls for: a ball's speed and bounce, a
+/// platform's gravity, a path's nodes. Those settings are the movement, and without them an
+/// object that carries one stands still: the remote missile steers but never travels, and the
+/// sparks a shot throws off sit where they were made instead of flying apart.
 pub fn read_movements(data: &[u8]) -> Vec<Movement> {
     let Some(base) = word(data, MOVEMENTS_OFFSET).map(|v| v as usize) else { return Vec::new() };
     if base == 0 {
         return Vec::new();
     }
-    let Some(count) = word(data, base + 4) else { return Vec::new() };
-    let kind = word(data, base + 2).unwrap_or(0);
+    let Some(kind) = word(data, base + 2) else { return Vec::new() };
+    let player = word(data, base).unwrap_or(0);
     let starting_direction = long(data, base + 8).unwrap_or(0);
-    (0..count).map(|_| Movement { kind, starting_direction }).collect()
+    // "Moving at start" decides whether an object begins at its configured speed, so it is a
+    // setting and not a count: every object that carries a movement here carries exactly one.
+    let header = vec![
+        ("Control", word(data, base).unwrap_or(0) as i64),
+        ("Move", word(data, base + MOVE).unwrap_or(0) as i64),
+        ("Opt", word(data, base + 6).unwrap_or(0) as i64),
+    ];
+    let at = base + SETTINGS;
+    let value = |o: usize| word(data, at + o).unwrap_or(0) as i64;
+
+    // Only the kinds this game uses are read. Reading the others would be writing down a guess:
+    // there is nothing here to check it against.
+    let mut values = header;
+    values.extend(match kind {
+        BALL => vec![
+            ("Speed", value(0)), ("Bounce", value(2)), ("Angles", value(4)),
+            ("Security", value(6)), ("Decelerate", value(8)),
+        ],
+        PATH => vec![
+            ("NodeCount", value(0)), ("MinimumSpeed", value(2)), ("MaximumSpeed", value(4)),
+            ("Loop", data.get(at + 6).copied().unwrap_or(0) as i64),
+            ("Reposition", data.get(at + 7).copied().unwrap_or(0) as i64),
+            ("Reverse", data.get(at + 8).copied().unwrap_or(0) as i64),
+        ],
+        PLATFORM => vec![
+            ("Speed", value(0)), ("Acceleration", value(2)), ("Deceleration", value(4)),
+            ("JumpControl", value(6)), ("Gravity", value(8)), ("Jump", value(10)),
+        ],
+        _ => Vec::new(),
+    });
+
+    let nodes = if kind == PATH { read_path_nodes(data, at + NODES, value(0) as usize) } else { Vec::new() };
+
+    vec![Movement { kind, player, starting_direction, values, nodes }]
 }
+
+/// The nodes of a path, fourteen bytes each, one after the other.
+fn read_path_nodes(data: &[u8], mut at: usize, count: usize) -> Vec<PathNode> {
+    let mut nodes = Vec::with_capacity(count);
+    for _ in 0..count {
+        let Some(&speed) = data.get(at) else { break };
+        let Some(&direction) = data.get(at + 1) else { break };
+        let short = |o: usize| word(data, at + o).unwrap_or(0);
+        nodes.push(PathNode {
+            speed,
+            direction,
+            dx: short(2) as i16,
+            dy: short(4) as i16,
+            cos: short(6) as i16,
+            sin: short(8) as i16,
+            length: short(10),
+            pause: short(12),
+        });
+        at += NODE_SIZE;
+    }
+    nodes
+}
+
+/// A movement's kind, where the kind's own settings start, and how long a path node is.
+const BALL: u16 = 4;
+const PATH: u16 = 5;
+const PLATFORM: u16 = 9;
+const MOVE: usize = 4;
+const SETTINGS: usize = 12;
+const NODES: usize = 10;
+const NODE_SIZE: usize = 14;
 
 /// The strings a text object shows and a question object offers, each with its own colour and
 /// font: a count, an offset per paragraph, and then the paragraphs themselves.

@@ -225,11 +225,42 @@ backdrop** is `obstacleType`, `collisionType`, width and height, then its shape:
 border colour, shape type, fill type, the two colours, whether the gradient runs down or across,
 and last the image handle.
 
-A **counter** sits at its own offset: a `uint16` size and then the reading, the minimum and the
-maximum as `int32`.
+A **counter** sits at its own offset: a `uint16` size, then the reading, the minimum and the
+maximum as `int32`. A counter that only feeds expressions stops there. One that draws itself
+carries how, past the range: width and height as `uint16` at +18 and +20, the display kind as a
+`uint32` at +24, and at +28 a `uint16` count of images followed by that many handles. The kinds
+are 0 hidden, 1 a row of digit images, 2 and 3 bars, 4 an animation and 5 text, and the images
+are one per glyph, in the order 0-9 and then the sign and the point.
 
-**Movements** sit at theirs: the kind at +2 and the count at +4, with the starting direction a
-`uint32` at +8. Every object here carries exactly one.
+**Movements** sit at theirs. Twelve bytes of header:
+
+```
+control            uint16
+type               uint16    0 static, 4 ball, 5 path, 9 platform
+movingAtStart      uint16
+options            uint16
+startingDirection  uint32    a mask, as directions are elsewhere
+```
+
+Every object here carries exactly one, and what follows the header is what the type calls for.
+A **ball** is speed, bounce, the number of angles it is held to, the bouncing security and the
+deceleration, five `uint16`. A **platform** is speed, acceleration, deceleration, jump control,
+gravity and jump strength, six `uint16`. A **path** is a `uint16` node count, its minimum and
+maximum speed as `uint16`, then loop, reposition and reverse as bytes, and from +22 its nodes,
+fourteen bytes each:
+
+```
+speed      uint8
+direction  uint8
+dx, dy     int16     the leg's whole displacement
+cos, sin   int16     that displacement as a unit vector, x16384
+length     uint16
+pause      uint16    ticks to wait at the end of it
+```
+
+Those settings are the movement. Without them an object that carries one stands still: the
+remote missile steers but never travels, and the sparks a shot throws off sit where they were
+made instead of flying apart.
 
 **Paragraphs**, what a text object shows and a question object offers, sit behind the system
 object offset, but not at it: eight bytes come first, then a `uint16` count and one `uint16`
@@ -318,7 +349,7 @@ unrelated program. Nothing disagreed:
 | Sounds | 34, samples byte for byte |
 | Frames | 12, with 7819 instances |
 | Objects | 375, and 760 animation directions |
-| Object properties | 244 movements, 67 backdrops, 53 counters, 41 paragraphs |
+| Object properties | 244 movements with their settings, 41 path nodes, 308 counters, 67 backdrops, 41 paragraphs |
 | Events | 35110 conditions and actions |
 | Parameters | 87294 fields |
 

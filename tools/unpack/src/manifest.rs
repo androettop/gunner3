@@ -194,13 +194,31 @@ impl Game<'_> {
                 objects::read_movements(p).iter().enumerate().map(|(i, m)| Json::object(vec![
                     ("name", Json::text(format!("Movement #{i}"))),
                     ("id", Json::int(i as i64)),
-                    ("player", Json::int(0)),
+                    ("player", Json::int(m.player as i64)),
                     ("type", Json::int(m.kind as i64)),
-                    ("startingDirection", Json::int(m.starting_direction as i64)),
-                    ("definition", Json::object(vec![
-                        ("Type", Json::int(m.kind as i64)),
-                        ("StartingDirection", Json::int(m.starting_direction as i64)),
-                    ])),
+                    ("startingDirection", Json::int(m.starting_direction as i32 as i64)),
+                    ("definition", Json::object({
+                        let mut fields = vec![
+                            ("Type", Json::int(m.kind as i64)),
+                            ("StartingDirection", Json::int(m.starting_direction as i32 as i64)),
+                        ];
+                        for (name, value) in &m.values {
+                            fields.push((name, Json::int(*value)));
+                        }
+                        if !m.nodes.is_empty() {
+                            fields.push(("PathNodes", Json::Array(m.nodes.iter().map(|n| Json::object(vec![
+                                ("Speed", Json::int(n.speed as i64)),
+                                ("Direction", Json::int(n.direction as i64)),
+                                ("Dx", Json::int(n.dx as i64)),
+                                ("Dy", Json::int(n.dy as i64)),
+                                ("Cos", Json::int(n.cos as i64)),
+                                ("Sin", Json::int(n.sin as i64)),
+                                ("Length", Json::int(n.length as i64)),
+                                ("Pause", Json::int(n.pause as i64)),
+                            ])).collect())));
+                        }
+                        fields
+                    })),
                 ])).collect())),
             ("alterableValues", Json::Array(vec![])),
             ("counter", Json::object(vec![
