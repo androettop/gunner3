@@ -345,7 +345,7 @@ function style(): HTMLStyleElement {
   /* One measure for the edge of the screen and for the space between buttons, taken from the
      width both times so that it is the same distance across as it is down. A share of the
      screen while it is played by thumb, and a fixed step when the buttons are only furniture. */
-  --gap: 3.5vw;
+  --gap: 1.75vw;
   /* No cap while the game is being played by thumb: a button is as big as the screen allows. */
   --cap: 100000px;
   /* The overlay is a frame for the controls and nothing else. Everything that is not a button
