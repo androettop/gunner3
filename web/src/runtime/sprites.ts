@@ -18,6 +18,11 @@ export class SpriteStore {
     private readonly sources: Map<number, ImageSource>,
   ) {}
 
+  /** The decoded image behind a handle, for the things that need the picture and not a sprite. */
+  source(handle: number): ImageSource | undefined {
+    return this.sources.get(handle);
+  }
+
   private readonly alphas = new Map<number, Uint8Array | null>();
   private readonly quickBackdrops = new Map<number, Sprite | null>();
 
