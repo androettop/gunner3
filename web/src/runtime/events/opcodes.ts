@@ -324,8 +324,8 @@ export const ACTIONS: Record<string, ActionFn> = {
 
   // Sound
   '-2:0': (ctx, ace) => ctx.scene.audio?.playSample(sampleHandle(ace)),
-  '-2:2': (ctx, ace) => void ctx.scene.audio?.playMusic(sampleHandle(ace), false),
-  '-2:5': (ctx, ace) => void ctx.scene.audio?.playMusic(sampleHandle(ace), num(ctx, ace, 1) > 1),
+  '-2:2': (ctx, ace) => ctx.scene.audio?.playMusic(sampleHandle(ace), false),
+  '-2:5': (ctx, ace) => ctx.scene.audio?.playMusic(sampleHandle(ace), num(ctx, ace, 1) > 1),
   '-2:3': (ctx) => ctx.scene.audio?.stopMusic(),
 
   // Storyboard

@@ -1,11 +1,12 @@
 //! Building the package the web runtime loads: the manifest, the event tables, and the assets.
 
-use crate::audio::{Music, Sound};
+use crate::audio::Sound;
 use crate::events::{self, Event};
 use crate::frames::Frame;
 use crate::images::Image;
 use crate::json::Json;
 use crate::objects::{self, Object};
+use crate::render::Track;
 
 /// Names for the bits of an object's flag word, in the order they sit in it.
 const OBJECT_FLAGS: [&str; 19] = [
@@ -39,7 +40,7 @@ pub struct Game<'a> {
     pub objects: &'a [Object],
     pub images: &'a [Image],
     pub sounds: &'a [Sound],
-    pub music: &'a [Music],
+    pub music: &'a [Track],
 }
 
 impl Game<'_> {
@@ -74,7 +75,8 @@ impl Game<'_> {
             ("music", Json::Array(self.music.iter().map(|m| Json::object(vec![
                 ("handle", Json::int(m.handle as i64)),
                 ("name", Json::text(&m.name)),
-                ("file", Json::text(format!("{}.mid", m.handle))),
+                ("file", Json::text(format!("{}.ogg", m.handle))),
+                ("format", Json::text("opus")),
                 ("frequency", Json::int(0)),
             ])).collect())),
             ("images", Json::Array(self.images.iter().map(|i| Json::object(vec![

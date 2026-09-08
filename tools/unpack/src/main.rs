@@ -12,15 +12,24 @@ mod manifest;
 mod zip;
 mod objects;
 mod png;
+mod render;
 mod inflate;
 mod pe;
 
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().collect();
+    let mut args: Vec<String> = std::env::args().collect();
+    let soundfont = match option(&mut args, "--soundfont") {
+        Ok(path) => path.map(PathBuf::from),
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
     if args.len() < 2 {
-        eprintln!("usage: {} <game.exe>", args[0]);
+        eprintln!("usage: {} <game.exe> [package.zip] [--soundfont general-midi.sf2]", args[0]);
         return ExitCode::FAILURE;
     }
 
@@ -70,10 +79,26 @@ fn main() -> ExitCode {
 
     let sounds = chunks.iter().find(|c| c.id == 26216)
         .map(|c| audio::read_sounds(&c.data)).transpose().unwrap_or_default().unwrap_or_default();
-    let music = chunks.iter().find(|c| c.id == 26217)
+    let midi = chunks.iter().find(|c| c.id == 26217)
         .map(|c| audio::read_music(&c.data)).transpose().unwrap_or_default().unwrap_or_default();
     let images = chunks.iter().find(|c| c.id == 26214)
         .map(|c| images::read_bank(&c.data)).transpose().unwrap_or_default().unwrap_or_default();
+
+    // Music takes a soundfont to render, and a build without one is still a playable game, so a
+    // missing one is said out loud rather than treated as a failure.
+    let music = match &soundfont {
+        Some(path) => match render::render_all(&midi, path) {
+            Ok(tracks) => tracks,
+            Err(e) => {
+                eprintln!("{e}");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => {
+            println!("no --soundfont: the package will have no music");
+            Vec::new()
+        }
+    };
 
     let header = chunks.iter().find(|c| c.id == 8739).map(|c| c.data.clone()).unwrap_or_default();
     let text_of = |id: u16| chunks.iter().find(|c| c.id == id)
@@ -125,7 +150,7 @@ fn main() -> ExitCode {
         add(format!("sounds/{}.wav", sound.handle), &sound.wav, &mut package);
     }
     for track in &music {
-        add(format!("music/{}.mid", track.handle), &track.midi, &mut package);
+        add(format!("music/{}.ogg", track.handle), &track.audio, &mut package);
     }
 
     let bytes = package.finish();
@@ -136,6 +161,16 @@ fn main() -> ExitCode {
     println!("{out}: {:.1} MB", bytes.len() as f64 / 1048576.0);
 
     ExitCode::SUCCESS
+}
+
+/// Takes an option and its value out of the arguments, leaving the positional ones behind.
+fn option(args: &mut Vec<String>, name: &str) -> Result<Option<String>, String> {
+    let Some(at) = args.iter().position(|arg| arg == name) else { return Ok(None) };
+    if at + 1 >= args.len() {
+        return Err(format!("{name} needs a path after it"));
+    }
+    args.remove(at);
+    Ok(Some(args.remove(at)))
 }
 
 /// Reads a game out of a file, whether that file is the game or the installer holding it.

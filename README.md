@@ -38,10 +38,11 @@ own data is not covered by it.
 |---|---|
 | `web/` | The runtime, as a library: one precompiled ES module that plays a package |
 | `tools/unpack/` | Reads a Clickteam game and writes the package the runtime loads |
-| `tools/*.sh` | Fetching a copy of the game, and building a page out of the two |
+| `tools/*.sh` | Fetching a copy of the game and a soundfont, and building a page out of them |
 | `docs/` | Notes on the file formats reverse-engineered along the way |
 
-A copy of the game lands in `game/`, and builds in `build/`; git ignores both.
+A copy of the game and the soundfont its music is rendered against land in `game/`, and builds
+in `build/`; git ignores both.
 
 ## Building
 
@@ -51,11 +52,13 @@ npx --yes serve build
 ```
 
 Without a path it fetches one: `tools/fetch-game.sh` takes a copy from the Internet Archive over
-a pinned checksum, into `game/`. A copy already there is left alone.
+a pinned checksum, into `game/`. A copy already there is left alone. `tools/fetch-soundfont.sh`
+does the same for [GeneralUser GS](https://www.schristiancollins.com/generaluser.php), which is
+what the music is rendered against; `$SOUNDFONT` points at one you already have instead.
 
-That takes about six seconds and writes three things: `fusion-runtime.js`, a `game.zip` holding
-everything the runtime needs, and an `index.html` that imports the one and calls it with the
-other:
+That takes about fifteen seconds, ten of them the music, and writes three things:
+`fusion-runtime.js`, a `game.zip` holding everything the runtime needs, and an `index.html` that
+imports the one and calls it with the other:
 
 ```html
 <canvas id="game"></canvas>
@@ -66,12 +69,14 @@ other:
 ```
 
 That is the whole of the page, and the whole of the library's public surface. A build comes to
-2.8 MB, of which 2.2 MB is the game.
+12.7 MB, of which 12.1 MB is the game and 10.4 MB of that is its music, rendered.
 
 The input can be either the installer the game's own page hands you or the game inside it, and
 which it is does not have to be said. `tools/unpack` reads the executable and writes the
 package: the chunks, the compression, the image bank, the sounds, the music, the frames, the
-objects and the event tables. `web/` is the runtime that interprets it.
+objects and the event tables. The music is MIDI, which no browser plays, so it is played there
+and then against the soundfont and recorded as Ogg Opus. `web/` is the runtime that interprets
+it.
 
 The page is the canvas and nothing else, on black. The loading screen is drawn on that canvas by
 the runtime, and names the game as its package gives it.
@@ -148,9 +153,12 @@ than render frames, since Fusion physics is written as per-tick deltas.
 Everything else is meant to match the original, and where it does not yet, that is a detail
 still to be polished rather than a decision.
 
-- **Music is a rendition, not a reproduction.** Shipping a General MIDI soundfont would dwarf
-  the rest of the assets, so notes are played through a small subtractive voice per note. The
-  score is right; the timbres are not what a 2000-era wavetable card produced.
+- **The music is recorded, not played.** The original read the score note by note through
+  whatever synthesiser the machine had, which is why it never sounded the same on two of them.
+  Here `tools/unpack` plays each track once against GeneralUser GS and the runtime plays the
+  recording, so the score is right and the instruments are a good General MIDI set, but they are
+  not the particular ones any one player heard. It also costs 10 MB of the download, which is
+  the whole of the difference between the two ways round.
 - **Aiming is measured from the muzzle, and rounded.** The reference runtime measures a launch
   toward a position from the shooter's hotspot and truncates the resulting angle. Measured that
   way, this game's six aims come out at 40.5, 1.7 and 178.3 degrees where its own events want

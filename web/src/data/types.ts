@@ -152,6 +152,7 @@ export interface MusicDef {
   handle: number;
   name: string;
   file: string;
+  format: string;
   frequency: number;
 }
 

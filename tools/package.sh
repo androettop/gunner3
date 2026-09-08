@@ -8,7 +8,11 @@
 # no game of its own: what comes out of here is the only place the two meet, and it is built
 # from a copy you already have. Without a path, tools/fetch-game.sh supplies one.
 #
-# Needs Rust and Node. The game is read by tools/unpack, which is this repository's own.
+# The game's music is MIDI, and it is rendered into audio here, against the soundfont
+# tools/fetch-soundfont.sh fetches. $SOUNDFONT points at one you already have instead.
+#
+# Needs Rust and Node, and cmake and a C compiler for the Opus encoder the music is written
+# with. The game is read by tools/unpack, which is this repository's own.
 #
 # The output has to be served over HTTP: a page opened from the file system cannot fetch its
 # own package. Any static server will do:
@@ -47,9 +51,14 @@ if [ ! -f "$GAME" ]; then
   exit 1
 fi
 
+if [ -z "${SOUNDFONT:-}" ]; then
+  "$REPO_ROOT/tools/fetch-soundfont.sh"
+  SOUNDFONT="$REPO_ROOT/game/GeneralUser-GS.sf2"
+fi
+
 echo "==> Reading $GAME"
 cargo build --release --quiet --manifest-path "$REPO_ROOT/tools/unpack/Cargo.toml"
-"$REPO_ROOT/tools/unpack/target/release/unpack" "$GAME" "$STAGE/game.zip"
+"$REPO_ROOT/tools/unpack/target/release/unpack" "$GAME" "$STAGE/game.zip" --soundfont "$SOUNDFONT"
 
 cd "$REPO_ROOT/web"
 [ -d node_modules ] || npm install --silent

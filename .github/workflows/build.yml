@@ -1,8 +1,9 @@
 # Builds the runtime and a playable build of the game from a fetched copy of the original.
 #
 # Nothing in this repository carries the game, so the workflow fetches one the way anybody
-# would: from the Internet Archive, over the checksum tools/fetch-game.sh pins. That download is
-# cached, so it happens once and every run after it starts from the copy already on disk.
+# would: from the Internet Archive, over the checksum tools/fetch-game.sh pins. The soundfont
+# the music is rendered against is fetched the same way. Both downloads are cached, so they
+# happen once and every run after starts from the copies already on disk.
 #
 # A push to main also publishes that build to GitHub Pages, which is the demo. Nothing about
 # that changes what the repository holds: the game reaches the demo the same way it reaches a
@@ -27,15 +28,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache the copy of the game
+      - name: Cache the copy of the game and the soundfont
         uses: actions/cache@v4
         with:
           path: game
-          # The checksum is in the script, so a change to which copy is fetched misses the cache.
-          key: game-${{ hashFiles('tools/fetch-game.sh') }}
+          # The checksums are in the scripts, so a change to what is fetched misses the cache.
+          key: game-${{ hashFiles('tools/fetch-game.sh', 'tools/fetch-soundfont.sh') }}
 
       - name: Fetch the game
         run: ./tools/fetch-game.sh
+
+      # The music is MIDI, and tools/unpack renders it against this before a build carries it.
+      - name: Fetch the soundfont
+        run: ./tools/fetch-soundfont.sh
 
       - name: Cache the unpacker's build
         uses: actions/cache@v4
