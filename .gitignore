@@ -1,0 +1,11 @@
+.work/
+node_modules/
+dist/
+bin/
+obj/
+config.json
+# A copy of the original game, fetched by tools/fetch-game.sh. Nothing here carries the game.
+game/
+build/
+web/public/game.zip
+demo/

@@ -1,0 +1,13 @@
+[package]
+name = "unpack"
+version = "0.1.0"
+edition = "2021"
+description = "Reads a Clickteam MMF 1.5 game and writes the package the web runtime loads"
+license = "GPL-3.0-or-later"
+
+[dependencies]
+# Only for writing: the game's own streams are decoded by this crate's own reader.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+
+[profile.release]
+opt-level = 3

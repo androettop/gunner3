@@ -1,0 +1,36 @@
+{
+  "name": "fusion-runtime",
+  "version": "0.1.0",
+  "description": "Plays Clickteam Multimedia Fusion 1.5 games in the browser, on Excalibur",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "main": "dist/fusion-runtime.js",
+  "module": "dist/fusion-runtime.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/fusion-runtime.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "pack": "../tools/pack-dev.sh",
+    "build": "npm run typecheck && npm run coverage && vite build && npm run minify && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "coverage": "node scripts/check-coverage.mjs",
+    "minify": "esbuild dist/fusion-runtime.js --minify --format=esm --target=es2022 --allow-overwrite --outfile=dist/fusion-runtime.js --log-level=warning"
+  },
+  "dependencies": {
+    "excalibur": "^0.30.3",
+    "fflate": "^0.8.3"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
+}

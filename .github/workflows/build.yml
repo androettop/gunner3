@@ -1,0 +1,68 @@
+# Builds the runtime and a playable build of the game from a fetched copy of the original.
+#
+# Nothing in this repository carries the game, so the workflow fetches one the way anybody
+# would: from the Internet Archive, over the checksum tools/fetch-game.sh pins. That download is
+# cached, so it happens once and every run after it starts from the copy already on disk.
+#
+# The build is uploaded as an artifact rather than published anywhere: the point of the split
+# between the runtime and the game is that this repository does not distribute the game.
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache the copy of the game
+        uses: actions/cache@v4
+        with:
+          path: game
+          # The checksum is in the script, so a change to which copy is fetched misses the cache.
+          key: game-${{ hashFiles('tools/fetch-game.sh') }}
+
+      - name: Fetch the game
+        run: ./tools/fetch-game.sh
+
+      - name: Cache the unpacker's build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            tools/unpack/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('tools/unpack/Cargo.toml', 'tools/unpack/src/**') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install the runtime's dependencies
+        working-directory: web
+        run: npm ci
+
+      # Reads the game, builds the library, checks every opcode in the game's event tables
+      # against the interpreter, and writes the page that puts the two together.
+      - name: Build
+        run: ./tools/package.sh game/gunner3.exe build
+
+      - name: Build the single-file page
+        run: ./tools/package.sh --single-file game/gunner3.exe build-single
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gunner3-web
+          path: |
+            build
+            build-single/index.html
+          retention-days: 14
