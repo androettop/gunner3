@@ -123,12 +123,6 @@ export async function play(options: PlayOptions): Promise<Game> {
     audio = new AudioBank(data);
     const audioTotal = data.sounds.size + data.music.size;
     await audio.load((loaded) => report({ loaded, total: audioTotal, label: 'Loading audio' }));
-
-    // A counter draws its reading as an image of its own glyphs, and an image has to be decoded
-    // before it can be drawn. Every reading a counter can show is known from the range it
-    // declares, so they are all built here rather than one at a time in front of the player.
-    await sprites.warmCounters((built, total) =>
-      report({ loaded: built, total, label: 'Loading counters' }));
   });
 
   // Save state outlives any single frame, and so do the objects the game marks global: a load
