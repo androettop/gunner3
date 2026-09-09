@@ -37,3 +37,27 @@ export function sourceOf(bitmap: ImageBitmap, path: string): ImageSource {
   element.removeAttribute(ImageSourceAttributeConstants.Filtering);
   return source;
 }
+
+/**
+ * Paints a picture and hands it back ready to be drawn, with nothing to wait for.
+ *
+ * The alternative is a canvas encoded to a PNG and decoded again, which is what this used to do:
+ * it costs whole frames on anything large, and until it finishes the caller has nothing to draw.
+ */
+export function paint(
+  width: number,
+  height: number,
+  path: string,
+  draw: (context: OffscreenCanvasRenderingContext2D) => void,
+): ImageSource | null {
+  try {
+    const canvas = new OffscreenCanvas(Math.max(1, width), Math.max(1, height));
+    const context = canvas.getContext('2d');
+    if (!context) return null;
+    draw(context);
+    return sourceOf(canvas.transferToImageBitmap(), path);
+  } catch (e) {
+    console.warn(`${path}: ${e}`);
+    return null;
+  }
+}

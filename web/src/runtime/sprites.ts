@@ -1,6 +1,10 @@
-import { ImageSource, Sprite } from 'excalibur';
+import {
+  type Graphic, GraphicsGroup, ImageSource, ImageSourceAttributeConstants, ImageWrapping, Sprite,
+  Vector,
+} from 'excalibur';
 import type { GameData } from '../data/loader';
 import { isCommon } from '../data/types';
+import { paint } from './bitmaps';
 
 /**
  * Sprite cache over the dumped PNGs.
@@ -32,15 +36,22 @@ export class SpriteStore {
   }
 
   private readonly alphas = new Map<number, Uint8Array | null>();
-  private readonly quickBackdrops = new Map<number, Sprite | null>();
+  private readonly quickBackdrops = new Map<number, Graphic | null>();
 
   /**
    * Builds the graphic for a quick backdrop, which is not a plain sprite.
    *
-   * Fill type 2 paints a colour ramp between the object's two colours and ignores its image
-   * field entirely; fill type 3 tiles the image across the object's box. Drawing the raw image
-   * handle instead gives the wrong picture in the first case and an untiled, undersized one in
-   * the second: the level's sky and its long ground strips are both quick backdrops.
+   * Fill type 3 tiles an image across the object's box; anything else is one colour, or a ramp
+   * between two of them, over the whole of it. The image field is ignored in that second case,
+   * so drawing the raw handle gives the wrong picture there and a single undersized copy of the
+   * tile in the first: a level's sky and its long ground strips are both quick backdrops.
+   *
+   * Neither is painted at the size it is drawn at. This game's ground is 6016x1536, which is a
+   * 37 MB picture to build, encode, decode and hand to the graphics card, and past 4096 across
+   * some cards will not take it at all and draw black. Both are things the card does for
+   * nothing instead: a tiled fill is the tile, drawn over a box that many times its width, and
+   * a ramp is a single pixel wide, or one tall, stretched over the box, which is exactly what a
+   * linear ramp is.
    */
   quickBackdrop(
     objectId: number,
@@ -49,69 +60,105 @@ export class SpriteStore {
       color1: string; color2: string;
       verticalGradient?: boolean; borderSize?: number; borderColor?: string;
     },
-  ): Sprite | null {
+  ): Graphic | null {
     const cached = this.quickBackdrops.get(objectId);
     if (cached !== undefined) return cached;
 
     const width = Math.max(1, Math.round(detail.width));
     const height = Math.max(1, Math.round(detail.height));
-    let sprite: Sprite | null = null;
+    const fill = detail.fillType === 3
+      ? this.tiled(detail.image, width, height)
+      : this.ramp(detail, width, height);
 
-    try {
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const context = canvas.getContext('2d');
-      if (context) {
-        if (detail.fillType === 3) {
-          const source = this.sources.get(detail.image);
-          if (source?.isLoaded()) {
-            const pattern = context.createPattern(source.image, 'repeat');
-            if (pattern) {
-              context.fillStyle = pattern;
-              context.fillRect(0, 0, width, height);
-            }
-          }
+    // A shape can carry a border of its own, drawn inside its box: four strips of one colour,
+    // which is one pixel stretched four ways rather than four more pictures.
+    const border = Math.min(Math.round(detail.borderSize ?? 0), Math.floor(Math.min(width, height) / 2));
+    // A tile that is not decoded yet is not a backdrop that has none: leaving it uncached asks
+    // again on the next frame, as everything else waiting on a picture does.
+    if (!fill && detail.fillType === 3) return null;
+
+    const graphic = border > 0 && fill
+      ? this.bordered(fill, detail.borderColor ?? '#000000', width, height, border)
+      : fill;
+
+    this.quickBackdrops.set(objectId, graphic);
+    return graphic;
+  }
+
+  /** The tile itself, drawn over a box as many times its size as it takes to fill it. */
+  private tiled(image: number, width: number, height: number): Graphic | null {
+    const source = this.sources.get(image);
+    if (!source?.isLoaded()) return null;
+
+    // A texture is clamped at its edge unless it is asked to repeat, which is what turns a box
+    // wider than the tile into more than one of it. The tile may be on the card already from
+    // being drawn as an ordinary sprite, so the upload is asked for again with it.
+    const element = source.image as unknown as HTMLImageElement;
+    element.setAttribute(ImageSourceAttributeConstants.WrappingX, ImageWrapping.Repeat);
+    element.setAttribute(ImageSourceAttributeConstants.WrappingY, ImageWrapping.Repeat);
+    element.setAttribute('forceUpload', 'true');
+
+    return new Sprite({
+      image: source,
+      sourceView: { x: 0, y: 0, width, height },
+      destSize: { width, height },
+    });
+  }
+
+  /** One colour, or a ramp between two, as the thinnest picture that says it. */
+  private ramp(
+    detail: { fillType: number; color1: string; color2: string; verticalGradient?: boolean },
+    width: number,
+    height: number,
+  ): Graphic | null {
+    const flat = detail.color1 === detail.color2;
+    // The shape says which way its ramp runs; a flat colour runs neither way.
+    const down = detail.verticalGradient !== false;
+    const source = paint(
+      flat || down ? 1 : width,
+      flat || !down ? 1 : height,
+      `quick backdrop ${detail.color1}-${detail.color2}`,
+      (context) => {
+        if (flat) {
+          context.fillStyle = detail.color1;
         } else {
-          if (detail.color1 === detail.color2) {
-            context.fillStyle = detail.color1;
-          } else {
-            // The shape says which way its gradient runs. Every one in this game happens to run
-            // downwards, so drawing them all that way was right by luck rather than by reading
-            // the field.
-            const across = detail.verticalGradient === false;
-            const ramp = across
-              ? context.createLinearGradient(0, 0, width, 0)
-              : context.createLinearGradient(0, 0, 0, height);
-            ramp.addColorStop(0, detail.color1);
-            ramp.addColorStop(1, detail.color2);
-            context.fillStyle = ramp;
-          }
-          context.fillRect(0, 0, width, height);
+          const ramp = down
+            ? context.createLinearGradient(0, 0, 0, height)
+            : context.createLinearGradient(0, 0, width, 0);
+          ramp.addColorStop(0, detail.color1);
+          ramp.addColorStop(1, detail.color2);
+          context.fillStyle = ramp;
         }
+        context.fillRect(0, 0, width, height);
+      },
+    );
+    return source ? new Sprite({ image: source, destSize: { width, height } }) : null;
+  }
 
-        // A shape can carry a border of its own, drawn inside its box.
-        const border = detail.borderSize ?? 0;
-        if (border > 0) {
-          context.strokeStyle = detail.borderColor ?? '#000000';
-          context.lineWidth = border;
-          context.strokeRect(border / 2, border / 2,
-            Math.max(0, width - border), Math.max(0, height - border));
-        }
-        const source = new ImageSource(canvas.toDataURL());
-        // Nothing decodes a data URL on its own: without this the sprite stays empty and the
-        // sky gradient and tiled ground simply never appear.
-        void source.load().catch((e) => console.warn(`quick backdrop ${objectId} decode: ${e}`));
-        sprite = source.toSprite();
-        sprite.width = width;
-        sprite.height = height;
-      }
-    } catch (e) {
-      console.warn(`quick backdrop ${objectId}: ${e}`);
-    }
+  /** The fill with a border of the given thickness drawn inside its box. */
+  private bordered(
+    fill: Graphic, color: string, width: number, height: number, thickness: number,
+  ): Graphic {
+    const source = paint(1, 1, `quick backdrop border ${color}`, (context) => {
+      context.fillStyle = color;
+      context.fillRect(0, 0, 1, 1);
+    });
+    if (!source) return fill;
 
-    this.quickBackdrops.set(objectId, sprite);
-    return sprite;
+    const strip = (w: number, h: number, x: number, y: number) => ({
+      graphic: new Sprite({ image: source, destSize: { width: w, height: h } }),
+      offset: new Vector(x, y),
+    });
+    return new GraphicsGroup({
+      useAnchor: false,
+      members: [
+        { graphic: fill, offset: Vector.Zero },
+        strip(width, thickness, 0, 0),
+        strip(width, thickness, 0, height - thickness),
+        strip(thickness, height - thickness * 2, 0, thickness),
+        strip(thickness, height - thickness * 2, width - thickness, thickness),
+      ],
+    });
   }
 
   /**
