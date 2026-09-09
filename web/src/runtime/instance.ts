@@ -43,6 +43,14 @@ export class FusionInstance {
   /** Plays left of a looping animation; refreshed when the animation or direction changes. */
   private loopsLeft = 1;
   /**
+   * Where the instance was at the end of the previous tick.
+   *
+   * The clean-up of what has left the level looks only at what moved, which is how a game may
+   * park a spare copy of an object far off the side of a frame and still find it there.
+   */
+  readonly restedAt: { x: number; y: number };
+
+  /**
    * Set for the tick in which the object's movement was stopped by the scenery.
    *
    * A movement stops flush against what it hits rather than inside it, so the object never
@@ -112,6 +120,7 @@ export class FusionInstance {
     this.def = def;
     this.x = x;
     this.y = y;
+    this.restedAt = { x, y };
 
     const common = isCommon(def.detail) ? def.detail : null;
     this.values = common ? [...common.alterableValues] : [];

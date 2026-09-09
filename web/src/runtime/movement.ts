@@ -1,6 +1,6 @@
 import { DIRECTION_COUNT, type FusionInstance } from './instance';
 import type { FrameScene } from './scene';
-import { isCommon, type MovementData } from '../data/types';
+import { isCommon, type MovementData, type ObjectDef } from '../data/types';
 
 /**
  * Fusion movement engines.
@@ -310,7 +310,6 @@ function travel(
       instance.x += stepX;
     }
     if (!collidedX && !blocked(instance, scene, targetX, instance.y)) instance.x = targetX;
-    if (collidedX) noteScenery(instance, scene, instance.x + stepX, instance.y);
   }
 
   if (addY !== 0) {
@@ -321,8 +320,11 @@ function travel(
       instance.y += stepY;
     }
     if (!collidedY && !blocked(instance, scene, instance.x, targetY)) instance.y = targetY;
-    if (collidedY) noteScenery(instance, scene, instance.x, instance.y + stepY);
   }
+
+  // Every stop is the scenery now that the frame's edge is not a wall, and "collides with the
+  // background" is read from this for the tick that follows.
+  if (collidedX || collidedY) instance.hitBackground = true;
 
   return { collidedX, collidedY, collided: collidedX || collidedY };
 }
@@ -427,17 +429,6 @@ function updatePlatform(
   }
 }
 
-/**
- * Records that the scenery, rather than the frame's edge, is what stopped this step. Leaving the
- * frame is its own condition in Fusion and does not count as meeting the background.
- */
-function noteScenery(instance: FusionInstance, scene: FrameScene, x: number, y: number): void {
-  const box = shiftedBounds(instance, x, y);
-  if (scene.obstacles.testRect(box.left, box.top, box.right, box.bottom)) {
-    instance.hitBackground = true;
-  }
-}
-
 /** The instance's box as it would be at another position. */
 function shiftedBounds(instance: FusionInstance, x: number, y: number) {
   const bounds = instance.bounds();
@@ -449,9 +440,51 @@ function shiftedBounds(instance: FusionInstance, x: number, y: number) {
   };
 }
 
-/** True if the instance's box would overlap an obstacle or leave the frame at this position. */
+/**
+ * How far outside the frame an object may travel before Fusion takes it away, in pixels.
+ *
+ * Something has to clear up what leaves the level, or a game that fires a shot a tick would
+ * still be holding every one of them an hour later. The distance is a fixed one, and is measured
+ * past the object's own size, so an object goes once the whole of it is this far out.
+ */
+const KILL_BORDER_X = 480;
+const KILL_BORDER_Y = 300;
+
+/**
+ * Whether objects of this kind are cleared away once they leave the frame.
+ *
+ * The object's own switches decide it. "Inactivate if too far" asks for it to be put to sleep
+ * out there rather than destroyed, and takes precedence; "do not destroy if too far" says to
+ * leave it be; and a movement the player steers is never taken out from under them. What is
+ * left is the traffic a level throws off, shots and debris and anything launched, which is
+ * Fusion's to clear up rather than the game's.
+ */
+export function clearedWhenTooFar(def: ObjectDef): boolean {
+  if (def.typeName !== 'Active' || !isCommon(def.detail)) return false;
+  const flags = def.detail.flags;
+  if (flags['InactivateIfTooFar'] || flags['DontDestroyIfTooFar']) return false;
+  return !def.detail.movements.some((movement) => Number(movement.player ?? 0) !== 0);
+}
+
+/** True once the whole of the instance's box is further out than that. */
+export function tooFarOutside(instance: FusionInstance, scene: FrameScene): boolean {
+  const { left, top, right, bottom } = instance.bounds();
+  return right < -KILL_BORDER_X
+    || bottom < -KILL_BORDER_Y
+    || left > scene.frame.width + KILL_BORDER_X
+    || top > scene.frame.height + KILL_BORDER_Y;
+}
+
+/**
+ * True if the instance's box would overlap an obstacle at this position.
+ *
+ * The frame's own edge is not one. Nothing in Fusion stops a movement at the border: an object
+ * that reaches it carries straight on out of the level, and what happens next is either the
+ * game's own doing or the clean-up below. Treating the edge as a wall instead leaves a moving
+ * object parked half in and half out, which is neither inside the play area nor far enough
+ * outside it for anything to notice, so whatever the game meant to do with it never happens.
+ */
 function blocked(instance: FusionInstance, scene: FrameScene, x: number, y: number): boolean {
   const { left, top, right, bottom } = shiftedBounds(instance, x, y);
-  if (right < 0 || bottom < 0 || left > scene.frame.width || top > scene.frame.height) return true;
   return scene.obstacles.testRect(left, top, right, bottom);
 }

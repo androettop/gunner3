@@ -5,7 +5,7 @@ import { FusionInstance } from './instance';
 import { SpriteStore } from './sprites';
 import { EventInterpreter } from './events/interpreter';
 import { ObstacleMask } from './obstacles';
-import { update as updateMovement } from './movement';
+import { clearedWhenTooFar, tooFarOutside, update as updateMovement } from './movement';
 import type { AudioBank } from './audio/player';
 import { GlobalValues } from './globals';
 import { IniStore } from './ini';
@@ -255,10 +255,35 @@ export class FrameScene extends Scene {
         instance.finishedAnimation = null;
         instance.hitBackground = false;
       }
+      this.clearWhatHasLeft();
       this.reapDestroyed();
     }
 
     for (const instance of this.instances) instance.syncPosition();
+  }
+
+  /**
+   * Takes away what has travelled out of the level.
+   *
+   * Nothing stops an object at the frame's edge, so a shot that misses keeps going, and without
+   * this every one of them would still be travelling long after it left the picture. Fusion
+   * clears them up the same way, and by the same rule: an object that has moved this tick, and
+   * whose own switches do not exempt it, goes as soon as it is far enough out.
+   *
+   * It goes outright rather than playing out whatever it does when it is destroyed, since there
+   * is nobody out there to see it.
+   */
+  private clearWhatHasLeft(): void {
+    for (const instance of this.instances) {
+      if (instance.destroyed || instance.destroying) continue;
+      const moved = instance.x !== instance.restedAt.x || instance.y !== instance.restedAt.y;
+      instance.restedAt.x = instance.x;
+      instance.restedAt.y = instance.y;
+      if (!moved) continue;
+      if (clearedWhenTooFar(instance.def) && tooFarOutside(instance, this)) {
+        instance.destroyed = true;
+      }
+    }
   }
 
   /** Pointer position in frame coordinates, for mouse-controlled movements. */
