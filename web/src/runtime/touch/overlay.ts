@@ -56,6 +56,8 @@ export interface Shell {
 export class ControlOverlay {
   private readonly root: HTMLDivElement;
   private readonly layouts: TouchLayout[];
+  /** Whether the game's own controls are up, which the panel can be told to change. */
+  private playedByTouch: boolean;
   /** Which key each pointer is currently holding, so releasing one lets go of exactly its own. */
   private readonly held = new Map<number, KeyCode[]>();
   private readonly down = new Map<KeyCode, number>();
@@ -70,17 +72,19 @@ export class ControlOverlay {
 
   constructor(
     layouts: TouchLayout[],
+    touch: boolean,
     private readonly chrome: TouchButton[],
     private readonly silhouette: (handle: number) => string | null,
     private readonly shell: Shell,
     private readonly reading: Reading = () => null,
+    /** Told whenever the panel turns the controls on or off, so the choice can be kept. */
+    private readonly onTouchChange: (on: boolean) => void = () => {},
   ) {
     this.layouts = layouts;
+    this.playedByTouch = touch && layouts.length > 0;
     this.root = document.createElement('div');
     this.root.className = 'fusion-touch';
-    // Without a game to play by thumb, the buttons left are page furniture rather than
-    // controls, and furniture does not need to be the size of a thumb.
-    if (layouts.length === 0) this.root.classList.add('is-lean');
+    this.wearLean();
     // Without a game to play by thumb, the two buttons left are page furniture rather than
     // controls, and furniture does not need to be the size of a thumb.
     if (layouts.length === 0) this.root.classList.add('is-lean');
@@ -92,19 +96,44 @@ export class ControlOverlay {
     window.addEventListener('orientationchange', this.place);
   }
 
+  /** Whether the game is being played by thumb, which decides if its own controls are up. */
+  get touch(): boolean {
+    return this.playedByTouch;
+  }
+
+  set touch(on: boolean) {
+    if (on === this.playedByTouch) return;
+    this.playedByTouch = on;
+    this.wearLean();
+    this.render();
+    this.onTouchChange(on);
+  }
+
   /** Puts up the layout for a frame, or takes the controls down if no layout covers it. */
   show(frame: number): void {
     if (frame === this.frame) return;
     this.frame = frame;
+    this.render();
+  }
+
+  /** Draws what the frame and the settings ask for, leaving an open panel where it is. */
+  private render(): void {
     this.releaseAll();
     for (const child of Array.from(this.root.children)) {
-      if (child.tagName !== 'STYLE') child.remove();
+      // The panel is not part of the frame and outlives a redraw, so that turning the controls
+      // on or off from inside it does not pull it out from under the thumb doing so.
+      if (child.tagName !== 'STYLE' && !child.classList.contains('fusion-touch-scrim')) {
+        child.remove();
+      }
     }
 
     // The steering area goes down first: it covers half the screen, and a button under it would
     // be a button the pad answers for. The chrome is up whatever the frame is; the game's own
-    // controls are up only where a layout says they belong.
-    const layout = this.layouts.find((l) => l.frames.includes(frame));
+    // controls are up only where a layout says they belong, and only while it is being played
+    // by thumb.
+    const layout = this.playedByTouch
+      ? this.layouts.find((l) => l.frames.includes(this.frame))
+      : undefined;
     if (layout?.steering) this.root.append(this.steeringPad(layout.steering));
 
     // A pinned button goes in its corner rather than at a place of its own, so that everything
@@ -131,7 +160,19 @@ export class ControlOverlay {
     }
 
     for (const button of buttons) if (!button.pin) this.root.append(this.button(button));
+
+    // Anything drawn now went under the panel, so the panel is put back on top of it.
+    const panel = this.root.querySelector('.fusion-touch-scrim');
+    if (panel) this.root.append(panel);
     this.place();
+  }
+
+  /**
+   * Without a game to play by thumb, the buttons left are page furniture rather than controls,
+   * and furniture does not need to be the size of a thumb.
+   */
+  private wearLean(): void {
+    this.root.classList.toggle('is-lean', !this.playedByTouch);
   }
 
   destroy(): void {
@@ -155,7 +196,7 @@ export class ControlOverlay {
 
   /** The panel the settings sit behind, which is up or down and nothing in between. */
   private toggleSettings(): void {
-    const open = this.root.querySelector('.fusion-touch-panel');
+    const open = this.root.querySelector('.fusion-touch-scrim');
     if (open) {
       open.remove();
       return;
@@ -165,8 +206,17 @@ export class ControlOverlay {
   }
 
   private settingsPanel(): HTMLElement {
+    // The panel sits on a sheet that covers the screen, so that anywhere off the panel is a way
+    // out of it, and so that nothing behind it is worked by accident while it is up.
+    const scrim = document.createElement('div');
+    scrim.className = 'fusion-touch-scrim';
+    scrim.addEventListener('pointerdown', (e) => {
+      if (e.target === scrim) scrim.remove();
+    });
+
     const panel = document.createElement('div');
     panel.className = 'fusion-touch-panel';
+    scrim.append(panel);
 
     const modes = document.createElement('div');
     modes.className = 'fusion-touch-choice';
@@ -184,6 +234,9 @@ export class ControlOverlay {
       });
       modes.append(option);
     }
+    panel.append(row('Touch', this.toggle('touch-controls', this.playedByTouch, (on) => {
+      this.touch = on;
+    })));
     panel.append(row('Screen', modes));
     panel.append(row('Smooth', this.toggle('smoothing', this.shell.smoothing(), (on) => {
       this.shell.setSmoothing(on);
@@ -195,7 +248,7 @@ export class ControlOverlay {
     panel.append(row('Effects', this.slider('effects', this.shell.effectsVolume(), (volume) => {
       this.shell.setEffectsVolume(volume);
     })));
-    return panel;
+    return scrim;
   }
 
   private toggle(name: string, on: boolean, onChange: (on: boolean) => void): HTMLElement {
@@ -585,13 +638,19 @@ function style(): HTMLStyleElement {
 }
 svg.fusion-touch-icon { background: none; }
 
+/* Everywhere that is not the panel, and a way out of it. */
+.fusion-touch-scrim {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+  touch-action: none;
+}
 /* A button is a shape to see the game through; a panel is a thing to read, so it is a sheet of
    the same white rather than a tint of it. */
 .fusion-touch-panel {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
   display: flex;
   flex-direction: column;
   gap: calc(var(--gap) * 1.1);

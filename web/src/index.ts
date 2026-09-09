@@ -30,6 +30,7 @@ import { IniStore } from './runtime/ini';
 import { GameLoader } from './runtime/loading';
 import { Preloader } from './runtime/preloader';
 import { FrameScene } from './runtime/scene';
+import { readSettings, type Settings, writeSettings } from './runtime/settings';
 import { SpriteStore } from './runtime/sprites';
 import { DEFAULT_CHROME, DEFAULT_LAYOUTS, type TouchLayout } from './runtime/touch/layout';
 import {
@@ -45,9 +46,9 @@ export interface PlayOptions {
    */
   canvas?: HTMLCanvasElement | string;
   /**
-   * Touch controls, over the screen. Left out, they are up when the page is asked for with
-   * `?touch=true`, which is how a phone gets them without a page having to know it is a phone.
-   * `false` refuses them outright; a layout of your own replaces the game's default one.
+   * Touch controls, over the screen. Left out, they come up on the machines that look like they
+   * are played by thumb, and the settings panel turns them on or off from there. `true` and
+   * `false` decide it outright; a layout of your own replaces the game's default one.
    *
    * The buttons that fit the game to the screen are up either way: they belong to the page
    * rather than to the game, and are as useful with a mouse as with a thumb.
@@ -80,14 +81,24 @@ const LOADING_HEIGHT = 480;
  * why it is worth drawing.
  */
 export async function play(options: PlayOptions): Promise<Game> {
-  const layouts = touchLayouts(options.touch);
+  const layouts = layoutsFor(options.touch);
+  // What the player last chose, over what this machine would start with. The guess at whether
+  // the game is played by thumb is only ever the first answer; after that it is their own.
+  const settings = readSettings({
+    touch: wantsTouch(options.touch),
+    displayMode: wantsTouch(options.touch) ? DisplayMode.FitScreen : DisplayMode.Fixed,
+    smoothing: false,
+    musicVolume: 1,
+    effectsVolume: 1,
+  });
+  const keep = () => writeSettings(settings);
   const engine = new Engine({
     width: LOADING_WIDTH,
     height: LOADING_HEIGHT,
     ...canvasOption(options.canvas),
     // Played by touch, the game takes the whole screen, letterboxed to keep its own shape: a
     // phone has no room to spare around a picture drawn at the size a monitor of 2000 had.
-    displayMode: layouts ? DisplayMode.FitScreen : DisplayMode.Fixed,
+    displayMode: displayModeNamed(settings.displayMode),
     backgroundColor: Color.Black,
     antialiasing: false,
     suppressPlayButton: true,
@@ -165,7 +176,9 @@ export async function play(options: PlayOptions): Promise<Game> {
     width: data.manifest.windowWidth,
     height: data.manifest.windowHeight,
   };
-  if (!layouts) engine.screen.viewport = { ...engine.screen.resolution };
+  if (engine.screen.displayMode === DisplayMode.Fixed) {
+    engine.screen.viewport = { ...engine.screen.resolution };
+  }
   engine.screen.applyResolutionAndViewport();
 
   // What a control asks the game, which is one counter's reading at a time. The frame it reads
@@ -178,13 +191,21 @@ export async function play(options: PlayOptions): Promise<Game> {
     return instance ? instance.values[0] : null;
   };
 
+  const shell = shellFor(engine, audio, () => overlay?.touch ?? false, settings, keep);
   overlay = new ControlOverlay(
-    layouts ?? [],
+    layouts,
+    settings.touch,
     DEFAULT_CHROME,
     (handle) => silhouetteFrom(sprites.source(handle)),
-    shellFor(engine, audio, layouts !== null),
+    shell,
     reading,
+    (on) => { settings.touch = on; keep(); },
   );
+
+  // The rest of what was chosen last time, put back now that there is something to put it on.
+  shell.setSmoothing(settings.smoothing);
+  audio.musicVolume = settings.musicVolume;
+  audio.effectsVolume = settings.effectsVolume;
 
   // Browsers hold audio until the page has been interacted with.
   const resume = () => audio.resume();
@@ -209,18 +230,33 @@ export async function play(options: PlayOptions): Promise<Game> {
   };
 }
 
+/** A display mode by name, falling back to the game's own size for anything unknown. */
+function displayModeNamed(name: string): DisplayMode {
+  return DISPLAY_MODES.find((mode) => mode === name) ?? DisplayMode.Fixed;
+}
+
+/** The layouts to play by, which are the game's own unless a page brings its own. */
+function layoutsFor(touch: PlayOptions['touch']): TouchLayout[] {
+  return Array.isArray(touch) ? touch : DEFAULT_LAYOUTS;
+}
+
 /**
- * Which touch layouts to put up, if any.
+ * Whether to start with the controls up.
  *
- * Asked for nothing, the controls follow the URL: a page can be handed to a phone as
- * `?touch=true` and to a desktop as itself, without the two being different pages.
+ * Asked for nothing, the machine is taken at its word: a phone or a tablet says so in its user
+ * agent, and iPads since iOS 13 say they are desktops and give themselves away by the number of
+ * fingers they accept instead. Either way the settings panel has the last word, so a wrong
+ * guess is one tap from being put right.
  */
-function touchLayouts(touch: PlayOptions['touch']): TouchLayout[] | null {
-  if (Array.isArray(touch)) return touch;
-  if (touch === false) return null;
-  if (touch === true) return DEFAULT_LAYOUTS;
-  const asked = new URLSearchParams(window.location.search).get('touch');
-  return asked === 'true' ? DEFAULT_LAYOUTS : null;
+function wantsTouch(touch: PlayOptions['touch']): boolean {
+  if (typeof touch === 'boolean') return touch;
+  if (Array.isArray(touch)) return true;
+  const agent = navigator.userAgent;
+  if (/Android|iPhone|iPad|iPod|Windows Phone|IEMobile|BlackBerry|Opera Mini|Mobile/i.test(agent)) {
+    return true;
+  }
+  // An iPad since iOS 13 calls itself a Mac; a Mac that takes a finger is one.
+  return /Macintosh/.test(agent) && navigator.maxTouchPoints > 0;
 }
 
 /**
@@ -241,7 +277,13 @@ const DISPLAY_MODES: DisplayMode[] = [DisplayMode.Fixed, DisplayMode.FitScreen];
  * asked of the whole document rather than of the canvas, so that the controls, which are not in
  * the canvas, come along with it.
  */
-function shellFor(engine: Engine, audio: AudioBank, touch: boolean): Shell {
+function shellFor(
+  engine: Engine,
+  audio: AudioBank,
+  touch: () => boolean,
+  settings: Settings,
+  keep: () => void,
+): Shell {
   const screen = engine.screen;
   // The size the game was drawn for, which is what "fixed" means. Fitting the game leaves the
   // fitted size behind in the viewport, so going back to its own size has to say so.
@@ -262,7 +304,10 @@ function shellFor(engine: Engine, audio: AudioBank, touch: boolean): Shell {
     displayMode: () => screen.displayMode,
     setDisplayMode(mode) {
       const wanted = DISPLAY_MODES.find((known) => known === mode);
-      if (wanted) setMode(wanted);
+      if (!wanted) return;
+      setMode(wanted);
+      settings.displayMode = wanted;
+      keep();
     },
     smoothing: () => screen.antialiasing,
     setSmoothing(on) {
@@ -272,11 +317,21 @@ function shellFor(engine: Engine, audio: AudioBank, touch: boolean): Shell {
       const rendering = screen as unknown as Record<string, string>;
       rendering._canvasImageRendering = on ? 'auto' : 'pixelated';
       screen.applyResolutionAndViewport();
+      settings.smoothing = on;
+      keep();
     },
     musicVolume: () => audio.musicVolume,
-    setMusicVolume: (volume) => { audio.musicVolume = volume; },
+    setMusicVolume(volume) {
+      audio.musicVolume = volume;
+      settings.musicVolume = audio.musicVolume;
+      keep();
+    },
     effectsVolume: () => audio.effectsVolume,
-    setEffectsVolume: (volume) => { audio.effectsVolume = volume; },
+    setEffectsVolume(volume) {
+      audio.effectsVolume = volume;
+      settings.effectsVolume = audio.effectsVolume;
+      keep();
+    },
     async toggleFullscreen() {
       try {
         if (document.fullscreenElement) {
@@ -286,7 +341,7 @@ function shellFor(engine: Engine, audio: AudioBank, touch: boolean): Shell {
         await document.documentElement.requestFullscreen();
         // The game is drawn wider than it is tall, so a phone playing it is turned on its side.
         // A browser that will not be told so simply stays as it was.
-        if (touch) await lockLandscape();
+        if (touch()) await lockLandscape();
       } catch (e) {
         console.warn(`fullscreen: ${e}`);
       }
