@@ -194,6 +194,10 @@ impl Game<'_> {
                         d.frames.iter().map(|f| Json::int(*f as i64)).collect())),
                 ])).collect())),
             ])).collect())),
+            ("textSize", {
+                let (width, height) = objects::read_text_size(p, object.object_type);
+                Json::object(vec![("width", Json::int(width)), ("height", Json::int(height))])
+            }),
             ("paragraphs", Json::Array(
                 objects::read_paragraphs(p, object.object_type).iter().map(|g| Json::object(vec![
                     ("text", Json::text(&g.text)),
@@ -257,6 +261,9 @@ impl Game<'_> {
             ])),
             ("alterableStrings", Json::Array(vec![])),
             ("identifier", Json::text(&common.identifier)),
+            ("qualifiers", Json::Array(
+                common.qualifiers.iter().map(|q| Json::Int(*q as i64)).collect(),
+            )),
             ("backColor", Json::text(&common.back_color)),
         ])
     }

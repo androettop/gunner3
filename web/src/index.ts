@@ -26,6 +26,7 @@ import { GameData } from './data/loader';
 import { GamePackage } from './data/package';
 import { AudioBank } from './runtime/audio/player';
 import { GlobalValues } from './runtime/globals';
+import { ArrayStore } from './runtime/arrays';
 import { IniStore } from './runtime/ini';
 import { GameLoader } from './runtime/loading';
 import { Preloader } from './runtime/preloader';
@@ -117,6 +118,8 @@ export async function play(options: PlayOptions): Promise<Game> {
 
     data = GameData.load(pkg);
     loader.title = data.manifest.appName;
+    // The settings the game shipped with, for a browser that has never run it.
+    ini.useDefaults(data.defaultIni);
 
     sprites = new SpriteStore(data, await new Preloader(data).loadAll(report));
 
@@ -131,6 +134,9 @@ export async function play(options: PlayOptions): Promise<Game> {
   // them still filled.
   const ini = new IniStore();
   const globals = new GlobalValues();
+  // The array objects hold an inventory that is filled on one screen and read on another, so
+  // like the save state they belong to the game rather than to any one frame.
+  const arrays = new ArrayStore();
   let current: FrameScene | null = null;
   let overlay: ControlOverlay | null = null;
   let sceneCount = 0;
@@ -149,6 +155,7 @@ export async function play(options: PlayOptions): Promise<Game> {
       // Attached before the scene initialises, which is when its instances are built and take
       // up what their objects were left holding.
       scene.globals = globals;
+      scene.arrays = arrays;
       // A frame jump cannot tear down the scene it is running inside, so defer it a tick.
       scene.onJumpToFrame = (next) => queueMicrotask(() => void show(next));
 

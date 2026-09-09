@@ -112,12 +112,18 @@ pub struct Common {
     pub new_flags: u16,
     pub identifier: String,
     pub back_color: String,
+    /// The qualifiers this object belongs to, as the codes events address them by.
+    pub qualifiers: Vec<u16>,
     pub animations: Vec<Animation>,
 }
 
 /// Offsets within the properties, and the fields that sit at fixed positions.
 const ANIMATIONS_OFFSET: usize = 6;
 const FLAGS: usize = 18;
+/// Room for eight qualifiers, ending early at -1.
+const QUALIFIERS: usize = 20;
+const QUALIFIER_SLOTS: usize = 8;
+const NO_QUALIFIER: u16 = 0xFFFF;
 const NEW_FLAGS: usize = 40;
 const IDENTIFIER: usize = 44;
 const BACK_COLOR: usize = 48;
@@ -129,11 +135,23 @@ pub fn read_common(data: &[u8]) -> Option<Common> {
     let word = |at: usize| u16::from_le_bytes(data[at..at + 2].try_into().unwrap());
 
     let animations = word(ANIMATIONS_OFFSET) as usize;
+    // An object names the groups it is part of here, and events address a whole group through
+    // one of these codes instead of naming an object. The list ends at the first empty slot.
+    let mut qualifiers = Vec::new();
+    for slot in 0..QUALIFIER_SLOTS {
+        let value = word(QUALIFIERS + slot * 2);
+        if value == NO_QUALIFIER {
+            break;
+        }
+        qualifiers.push(value);
+    }
+
     Some(Common {
         flags: word(FLAGS),
         new_flags: word(NEW_FLAGS),
         identifier: String::from_utf8_lossy(&data[IDENTIFIER..IDENTIFIER + 4]).into_owned(),
         back_color: format!("#{:02X}{:02X}{:02X}", data[BACK_COLOR], data[BACK_COLOR + 1], data[BACK_COLOR + 2]),
+        qualifiers,
         animations: read_animations(data, animations).unwrap_or_default(),
     })
 }
@@ -454,6 +472,28 @@ const NODE_SIZE: usize = 14;
 ///
 /// Only text and question objects keep them. The offset they sit behind is used for something
 /// else by everything else, so reading it unconditionally invents paragraphs for counters.
+/**
+ * The rectangle a text object is laid out in.
+ *
+ * A text object carries no image, so this is the only thing that says how big it is. The runtime
+ * needs it to know where the object is on screen: this game's options screen is a column of text
+ * objects the player clicks, and without a size none of them can be hit.
+ */
+pub fn read_text_size(data: &[u8], object_type: u16) -> (u16, u16) {
+    if !matches!(object_type, 3 | 4) {
+        return (0, 0);
+    }
+    let Some(base) = word(data, SYSTEM_OFFSET).map(|v| v as usize) else { return (0, 0) };
+    if base == 0 {
+        return (0, 0);
+    }
+    // A four-byte size, then the width and the height, ahead of the paragraph table.
+    match (word(data, base + 4), word(data, base + 6)) {
+        (Some(width), Some(height)) => (width, height),
+        _ => (0, 0),
+    }
+}
+
 pub fn read_paragraphs(data: &[u8], object_type: u16) -> Vec<Paragraph> {
     if !matches!(object_type, 3 | 4) {
         return Vec::new();

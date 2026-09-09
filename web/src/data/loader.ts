@@ -15,6 +15,17 @@ export class GameData {
   readonly music = new Map<number, MusicDef>();
   readonly fonts = new Map<number, FontDef>();
   private readonly events = new Map<number, FrameEvents>();
+  /** Objects by the qualifier they carry, for events that address a whole group at once. */
+  private readonly qualified = new Map<number, number[]>();
+  /**
+   * The configuration files the game ships with, by file name.
+   *
+   * A game is not only its executable: Gunner 4 keeps the player's key bindings in an INI file
+   * beside it and reads them at startup, so a package built without one starts with no controls
+   * bound at all. The packaging script puts a copy under `defaults/`, and the INI store falls
+   * back to it for a file the player has not written yet.
+   */
+  readonly defaultIni = new Map<string, Record<string, Record<string, string>>>();
 
   private constructor(manifest: GameManifest, private readonly pkg: GamePackage) {
     this.manifest = manifest;
@@ -23,10 +34,44 @@ export class GameData {
     for (const sound of manifest.sounds) this.sounds.set(sound.handle, sound);
     for (const track of manifest.music) this.music.set(track.handle, track);
     for (const font of manifest.fonts ?? []) this.fonts.set(font.handle, font);
+
+    for (const object of manifest.objects) {
+      const detail = object.detail as { qualifiers?: number[] } | null;
+      for (const qualifier of detail?.qualifiers ?? []) {
+        const members = this.qualified.get(qualifier);
+        if (members) members.push(object.id);
+        else this.qualified.set(qualifier, [object.id]);
+      }
+    }
+  }
+
+  /**
+   * Fusion's "qualifier" bit: an event that names one of these means every object carrying that
+   * qualifier, rather than a single object.
+   */
+  static readonly QUALIFIER = 0x8000;
+
+  /** True where an event's object reference names a group rather than one object. */
+  static isQualifier(objectInfo: number): boolean {
+    return (objectInfo & GameData.QUALIFIER) !== 0;
+  }
+
+  /** The objects a qualifier stands for, or nothing where it names none. */
+  objectsQualifiedBy(objectInfo: number): number[] {
+    return this.qualified.get(objectInfo & ~GameData.QUALIFIER) ?? [];
   }
 
   static load(pkg: GamePackage): GameData {
-    return new GameData(pkg.json('game.json') as GameManifest, pkg);
+    const data = new GameData(pkg.json('game.json') as GameManifest, pkg);
+    for (const path of pkg.under('defaults/')) {
+      const name = path.slice('defaults/'.length).toLowerCase();
+      try {
+        data.defaultIni.set(name, pkg.json(path) as Record<string, Record<string, string>>);
+      } catch (e) {
+        console.warn(`defaults: could not read ${path}: ${e}`);
+      }
+    }
+    return data;
   }
 
   get frames(): FrameDef[] {

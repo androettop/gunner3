@@ -1,9 +1,12 @@
 import { Color, Engine, type Keys, Scene, Vector } from 'excalibur';
-import type { GameData } from '../data/loader';
+import { GameData } from '../data/loader';
 import type { FrameDef, FrameEvents } from '../data/types';
 import { FusionInstance } from './instance';
 import { SpriteStore } from './sprites';
 import { EventInterpreter } from './events/interpreter';
+import { codesForKey } from './events/interpreter';
+import { extensionOf, type ExtensionExpression } from './events/extensions';
+import { ArrayStore } from './arrays';
 import { ObstacleMask } from './obstacles';
 import { clearedWhenTooFar, tooFarOutside, update as updateMovement } from './movement';
 import type { AudioBank } from './audio/player';
@@ -42,6 +45,8 @@ export class FrameScene extends Scene {
   ini: IniStore = new IniStore();
   /** Alterable values of global objects, carried between frames by the host. */
   globals: GlobalValues = new GlobalValues();
+  /** Array-object storage, carried between frames by the host as the save state is. */
+  arrays: ArrayStore = new ArrayStore();
   audio: AudioBank | null = null;
   /** Set by the host so "jump to frame" can change scenes. */
   onJumpToFrame: ((index: number) => void) | null = null;
@@ -143,6 +148,22 @@ export class FrameScene extends Scene {
 
   wasClicked(): boolean {
     return this.pointerPressed;
+  }
+
+  /** Whether any key at all was pressed this tick, for the control object's rebinding screen. */
+  anyKeyPressed(): boolean {
+    return this.pressedKeys.size > 0;
+  }
+
+  /**
+   * The keys pressed this tick, as the Windows virtual key codes the game stores.
+   *
+   * The options screen writes whatever was just pressed into the control it is redefining, so
+   * what it needs back is the number that would have been written on Windows, not the browser's
+   * own name for the key.
+   */
+  pressedKeyCodes(): number[] {
+    return [...this.pressedKeys].flatMap((key) => codesForKey(key));
   }
 
   /** Logic ticks run since the frame opened. */
@@ -401,7 +422,22 @@ export class FrameScene extends Scene {
    *
    * Collisions are the exception and check for themselves, so nothing collides with a corpse.
    */
+  /**
+   * The instances an event's object reference stands for.
+   *
+   * Usually that is one object's instances. Where the reference is a qualifier it is every
+   * instance of every object carrying that qualifier instead, which is how one event fades a
+   * whole menu or knocks back every kind of enemy at once.
+   */
   instancesOf(objectId: number): FusionInstance[] {
+    if (GameData.isQualifier(objectId)) {
+      const group: FusionInstance[] = [];
+      for (const member of this.data.objectsQualifiedBy(objectId)) {
+        const instances = this.byObject.get(member);
+        if (instances) group.push(...instances);
+      }
+      return group;
+    }
     return this.byObject.get(objectId) ?? [];
   }
 
@@ -448,6 +484,83 @@ export class FrameScene extends Scene {
       right: this.camera.pos.x + halfW,
       bottom: this.camera.pos.y + halfH,
     };
+  }
+
+  /**
+   * The mouse, in frame coordinates.
+   *
+   * Expressions read it as a place in the level rather than on the page, so it scrolls with the
+   * view like anything else the events compare against.
+   */
+  pointer(): { x: number; y: number } {
+    const pos = this.engine?.input?.pointers?.primary?.lastWorldPos;
+    return { x: pos?.x ?? 0, y: pos?.y ?? 0 };
+  }
+
+  /**
+   * Hides or shows the mouse pointer over the game.
+   *
+   * The pointer belongs to the page rather than to the frame, so this is asked of the canvas
+   * the game is drawn on and not of anything in the scene.
+   */
+  setCursorVisible(visible: boolean): void {
+    const canvas = this.engine?.canvas;
+    if (canvas) canvas.style.cursor = visible ? '' : 'none';
+  }
+
+  /** The index a fast loop has reached, for the expression that reads it. */
+  loopIndex(name: string): number {
+    return this.interpreter?.loopIndex(name) ?? 0;
+  }
+
+  /**
+   * An extension's own expression, read through the object it is asked of.
+   *
+   * As with its actions and conditions, which extension a type number means is decided by the
+   * game, so the object settles it rather than the number.
+   */
+  extensionExpression(
+    objectType: number,
+    num: number,
+    objectInfo: number,
+    _raw: number | string | undefined,
+    args: readonly (number | string)[],
+  ): number | string {
+    const entry = this.extensionExpressionEntry(objectType, num, objectInfo);
+    return entry ? entry.read(this, objectInfo, args) : 0;
+  }
+
+  /**
+   * How many arguments an extension expression takes, or null where this runtime has no reading
+   * for it. The evaluator needs to know before it can tell a bare reading from a call.
+   */
+  extensionExpressionArity(objectType: number, num: number, objectInfo: number): number | null {
+    const entry = this.extensionExpressionEntry(objectType, num, objectInfo);
+    return entry ? (entry.args ?? 0) : null;
+  }
+
+  private extensionExpressionEntry(
+    objectType: number,
+    num: number,
+    objectInfo: number,
+  ): ExtensionExpression | undefined {
+    if (objectType < 32) return undefined;
+    return extensionOf(this.data.objects.get(objectInfo))?.expressions?.[num];
+  }
+
+  /**
+   * "Center display" on one axis only.
+   *
+   * The two actions are separate in Fusion and a level uses them separately: it follows the
+   * player horizontally while holding the vertical view still, so centring both from either one
+   * would drag the view up and down with every jump.
+   */
+  centreOnX(x: number): void {
+    this.centreOn(x, this.camera.pos.y);
+  }
+
+  centreOnY(y: number): void {
+    this.centreOn(this.camera.pos.x, y);
   }
 
   /** Hands every global object in this frame whatever it was last left holding. */

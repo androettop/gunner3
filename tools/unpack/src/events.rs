@@ -30,15 +30,24 @@ pub struct Event {
     pub actions: Vec<Ace>,
 }
 
-/// The tag the events sit behind, and how much of the container comes before them.
-const HEADER: usize = 46;
+/// The tag the events sit behind, and how much of the container comes before the list of
+/// qualifiers it ends with.
+const HEADER: usize = 44;
+/// One qualifier, as the header lists them.
+const QUALIFIER: usize = 4;
 
 pub fn read(data: &[u8]) -> Result<Vec<Event>, String> {
-    if data.len() < HEADER || &data[..4] != b"ER>>" {
+    if data.len() < HEADER + 2 || &data[..4] != b"ER>>" {
         return Err("not an event table".into());
     }
 
-    let mut at = HEADER;
+    // The header ends with the qualifiers the frame's events address: a count, then four bytes
+    // each. Gunner 3 declares none in any frame, which left 'ERes' at a fixed offset and the
+    // count looking like part of the run-up to it; Gunner 4's levels declare up to four, and
+    // reading them as the tag is what made every one of those tables "expected ERes" and come
+    // back empty. Counting them out is what tells the two apart.
+    let count = u16::from_le_bytes(data[HEADER..HEADER + 2].try_into().unwrap()) as usize;
+    let mut at = HEADER + 2 + count * QUALIFIER;
     // 'ERes' wraps 'ERev', which holds the events.
     for tag in [b"ERes", b"ERev"] {
         if data.get(at..at + 4) != Some(&tag[..]) {

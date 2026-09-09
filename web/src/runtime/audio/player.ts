@@ -130,6 +130,9 @@ export class AudioBank {
     ]);
   }
 
+  /** Samples still playing, so that "stop all sounds" has something to stop. */
+  private readonly playing = new Set<AudioBufferSourceNode>();
+
   playSample(handle: number): void {
     const context = this.ensureContext();
     const buffer = this.samples.get(handle);
@@ -137,7 +140,21 @@ export class AudioBank {
     const source = context.createBufferSource();
     source.buffer = buffer;
     source.connect(this.effectsGain);
+    source.onended = () => this.playing.delete(source);
+    this.playing.add(source);
     source.start();
+  }
+
+  /** "Stop all sounds": every sample at once, which is not the same as stopping the music. */
+  stopAll(): void {
+    for (const source of [...this.playing]) {
+      try {
+        source.stop();
+      } catch {
+        // A source that has already finished cannot be stopped, and does not need to be.
+      }
+    }
+    this.playing.clear();
   }
 
   playMusic(handle: number, loop: boolean): void {

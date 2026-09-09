@@ -77,6 +77,13 @@ export interface CommonDetail {
   animations: AnimationData[];
   /** Strings shown by Text objects and offered by Question objects. */
   paragraphs: ParagraphData[];
+  /**
+   * The rectangle a Text object is laid out in.
+   *
+   * Text carries no image, so this is the only thing that says how big it is, and without it
+   * such an object has no box for the mouse to find.
+   */
+  textSize: { width: number; height: number };
   movements: MovementData[];
   alterableValues: number[];
   /**
@@ -87,6 +94,14 @@ export interface CommonDetail {
   counter: CounterData;
   alterableStrings: string[];
   identifier: string;
+  /**
+   * The qualifiers this object belongs to, by number.
+   *
+   * A qualifier is Fusion's way of addressing a group of objects at once: an event that names
+   * one applies to every object carrying it. Events refer to them with the high bit set, so
+   * qualifier 0 arrives in an event as 0x8000.
+   */
+  qualifiers: number[];
   backColor: string;
 }
 

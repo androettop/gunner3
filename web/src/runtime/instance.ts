@@ -43,6 +43,10 @@ export class FusionInstance {
   animationFrame = 0;
   animationTimer = 0;
   animationOver = false;
+  /** "Stop animation" holds the object on the frame it is showing until it is started again. */
+  animationPaused = false;
+  /** "Force frame" pins the animation to one frame; null while it runs normally. */
+  forcedFrame: number | null = null;
   /** Plays left of a looping animation; refreshed when the animation or direction changes. */
   private loopsLeft = 1;
   /**
@@ -219,9 +223,54 @@ export class FusionInstance {
 
   /** Text objects re-render when the displayed paragraph changes. */
   setParagraph(index: number): void {
-    if (this.paragraph === index) return;
+    if (this.paragraph === index && this.overriddenText === null) return;
+    this.overriddenText = null;
     this.paragraph = index;
     this.renderedParagraph = null;
+    this.syncGraphic();
+  }
+
+  /** Text set by an event, which stands in for the paragraph the object was built with. */
+  private overriddenText: string | null = null;
+
+  /** The text a text object is currently showing, for the expression that reads it. */
+  currentText(): string {
+    if (this.overriddenText !== null) return this.overriddenText;
+    const detail = this.def.detail;
+    if (!detail || !('paragraphs' in detail)) return '';
+    const paragraphs = detail.paragraphs;
+    if (!paragraphs.length) return '';
+    return paragraphs[Math.min(this.paragraph, paragraphs.length - 1)]?.text ?? '';
+  }
+
+  /** A colour set by an event, over the one the paragraph carries. */
+  private overriddenTextColor: string | null = null;
+
+  /** "Set the text colour": what the object is drawn in from now on. */
+  setTextColor(color: string): void {
+    if (this.overriddenTextColor === color) return;
+    this.overriddenTextColor = color;
+    this.renderedParagraph = null;
+    this.syncGraphic();
+  }
+
+  /** "Set the text": what the object shows from now on, whatever paragraph it was built with. */
+  setText(value: string): void {
+    if (this.overriddenText === value) return;
+    this.overriddenText = value;
+    this.renderedParagraph = null;
+    this.syncGraphic();
+  }
+
+  /**
+   * Holds the animation on one frame, or lets it run again.
+   *
+   * The frame is applied straight away rather than at the next animation step, since the point
+   * of forcing one is to show it now.
+   */
+  forceAnimationFrame(frame: number | null): void {
+    this.forcedFrame = frame;
+    if (frame !== null) this.animationFrame = frame;
     this.syncGraphic();
   }
 
@@ -269,6 +318,7 @@ export class FusionInstance {
    * eighth frame, and at speed 100 it went 0, 2, 4, 6 and round again, so it never left.
    */
   tickAnimation(ticks: number): void {
+    if (this.animationPaused || this.forcedFrame !== null) return;
     const direction = this.currentDirectionData();
     const frames = this.currentFrames();
     if (!direction || frames.length <= 1) return;
@@ -297,7 +347,14 @@ export class FusionInstance {
    * The arithmetic is the runtime's, integer throughout, so the middle of 35..50 is 42 and not
    * 42.5.
    */
+  /**
+   * A speed set by an event, which stands in for the one the animation was built with. Null
+   * while the object animates at its own pace.
+   */
+  animationSpeedOverride: number | null = null;
+
   private animationSpeed(direction: DirectionData): number {
+    if (this.animationSpeedOverride !== null) return this.animationSpeedOverride;
     const delta = direction.maxSpeed - direction.minSpeed;
     if (delta === 0) return direction.minSpeed;
 
@@ -338,6 +395,20 @@ export class FusionInstance {
     this.finishedAnimation = finished;
   }
 
+  /**
+   * How solid the object is drawn: 1 for solid, 0 for invisible.
+   *
+   * Fusion calls it semi-transparency and counts it the other way round, from 0 to 128; the
+   * action that sets it does that conversion, so what is kept here is an ordinary opacity.
+   */
+  get opacity(): number {
+    return this.actor.graphics.opacity;
+  }
+
+  set opacity(value: number) {
+    this.actor.graphics.opacity = Math.min(Math.max(value, 0), 1);
+  }
+
   /** True once a sprite has been applied; false while its image is still loading. */
   hasGraphic = false;
 
@@ -362,7 +433,8 @@ export class FusionInstance {
     }
 
     const frames = this.currentFrames();
-    const handle = frames[Math.min(this.animationFrame, frames.length - 1)];
+    const frame = this.forcedFrame ?? this.animationFrame;
+    const handle = frames[Math.min(Math.max(frame, 0), frames.length - 1)];
     if (handle === undefined) return false;
 
     const sprite = this.sprites.sprite(handle);
@@ -440,15 +512,16 @@ export class FusionInstance {
     const paragraphs = this.def.detail.paragraphs ?? [];
     const paragraph = paragraphs[Math.min(this.paragraph, paragraphs.length - 1)];
     if (!paragraph) return false;
+    const shown = this.overriddenText ?? paragraph.text;
 
-    if (this.renderedParagraph !== paragraph.text) {
-      this.renderedParagraph = paragraph.text;
+    if (this.renderedParagraph !== shown) {
+      this.renderedParagraph = shown;
       // The paragraph names one of the game's own fonts, which is a face and a size rather
       // than any letters: what the machine makes of that name is what the text is written in.
       const font = fontOr(this.data.fonts.get(paragraph.font));
       const text = new Text({
-        text: paragraph.text,
-        color: Color.fromHex(paragraph.color),
+        text: shown,
+        color: Color.fromHex(this.overriddenTextColor ?? paragraph.color),
         font: new Font({
           family: fontFamily(font),
           size: font.size,
@@ -519,6 +592,19 @@ export class FusionInstance {
         top: this.y,
         right: this.x + this.def.detail.width,
         bottom: this.y + this.def.detail.height,
+      };
+    }
+
+    // Text carries no image, and its box is the rectangle it was laid out in. Without this it
+    // has no extent at all, and a text object the game expects to be clicked cannot be hit: the
+    // options screen is a column of them, and every setting on it was unreachable.
+    const text = this.def.typeName === 'Text' ? textSizeOf(this.def.detail) : null;
+    if (text) {
+      return {
+        left: this.x,
+        top: this.y,
+        right: this.x + text.width,
+        bottom: this.y + text.height,
       };
     }
 
@@ -604,4 +690,17 @@ function startingDirection(mask: number): number {
   if (!mask) return 0;
   for (let bit = 0; bit < DIRECTION_COUNT; bit++) if (mask & (1 << bit)) return bit;
   return 0;
+}
+
+/**
+ * The rectangle a text object occupies, or nothing for anything that draws an image instead.
+ *
+ * Only Text objects are laid out this way; a size of zero means the object was never given one
+ * and is treated as having no box, rather than as a box of nothing.
+ */
+function textSizeOf(detail: ObjectDef['detail']): { width: number; height: number } | null {
+  if (!isCommon(detail)) return null;
+  const size = detail.textSize;
+  if (!size || (!size.width && !size.height)) return null;
+  return size;
 }

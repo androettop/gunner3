@@ -23,6 +23,8 @@ export interface Ctx {
   conditionKey: string;
   interpreter: EventInterpreter;
   event: EventDef;
+  /** The fast loop being run, or null in the ordinary once-a-tick pass. */
+  loop: string | null;
 }
 
 export type ConditionFn = (ctx: Ctx, ace: AceDef) => boolean;
@@ -228,6 +230,54 @@ export const CONDITIONS: Record<string, ConditionFn> = {
 
   // Counters keep their reading in alterable value 0.
   '7:-81': (ctx, ace) => pick(ctx, ace, (i) => compare(comparison(ace, 0), i.values[0] ?? 0, num(ctx, ace, 0))),
+
+  // "Never": the event is switched off in the editor and never fires.
+  '-1:-2': () => false,
+
+  // "Compare two general values", the general-purpose test: both sides are expressions and the
+  // operator travels with the right-hand one, as it does for the alterable-value comparison.
+  // The left parameter carries a comparison field too, but it is always zero and reading the
+  // operator from it turns every one of these into "equals": a level asks whether a key binding
+  // is below the number that stands for "unbound", and read as equality that is never true, so
+  // nothing the player pressed reached the game.
+  '-1:-3': (ctx, ace) => compare(comparison(ace, 1), num(ctx, ace, 0), num(ctx, ace, 1)),
+
+  // "On loop": true only while the named fast loop is the one being run, which is what makes an
+  // event belong to a loop rather than to the tick.
+  '-1:-16': (ctx, ace) => ctx.loop !== null && ctx.loop === text(ctx, ace, 0),
+
+  // The remaining two timer comparisons. As with "is greater than", the operator is in the
+  // opcode rather than in the parameter, which carries something else in its Comparison field.
+  '-4:-2': (ctx, ace) => ctx.scene.elapsed * 1000 < Number(param(ace, 0)?.data?.['Timer'] ?? 0),
+  '-4:-3': (ctx, ace) => {
+    // "Equals" cannot mean one exact millisecond, which a tick would step straight over; it is
+    // true for the tick the timer passes the mark on.
+    const mark = Number(param(ace, 0)?.data?.['Timer'] ?? 0) / 1000;
+    return ctx.scene.elapsed >= mark && ctx.scene.elapsed - ctx.delta < mark;
+  },
+
+  // End of frame and end of application: neither happens on its own, so both stay false until
+  // something in the game asks for it.
+  '-3:-2': () => false,
+  '-3:-4': () => false,
+
+  // "Is the position an obstacle": a point in the frame, tested against the obstacle mask.
+  '-3:-5': (ctx, ace) => ctx.scene.obstacles.test(num(ctx, ace, 0), num(ctx, ace, 1)),
+
+  // The mouse, as a click rather than as a press on an object.
+  '-6:-5': (ctx) => ctx.scene.wasClicked(),
+
+  // More object state, in the same shape as the readings already above.
+  '2:-12': (ctx, ace) => {
+    const outside = targets(ctx, ace).filter((i) => !inPlayArea(ctx.scene, i));
+    const fresh = ctx.interpreter.freshPairs(ctx.conditionKey, new Set(outside.map((i) => String(i.id))));
+    const leaving = outside.filter((i) => fresh.has(String(i.id)));
+    if (!leaving.length) return false;
+    select(ctx, ace.objectInfo, leaving);
+    return true;
+  },
+  '2:-15': (ctx, ace) => pick(ctx, ace, (i) => compare(comparison(ace, 0), i.speed, num(ctx, ace, 0))),
+  '2:-28': (ctx, ace) => pick(ctx, ace, (i) => !i.visible),
 };
 
 // ---------------------------------------------------------------- actions
@@ -264,13 +314,7 @@ export const ACTIONS: Record<string, ActionFn> = {
   // Destroying is not always immediate: an object with a disappearing animation plays it out
   // first, which is what makes a shot spark against a wall and a barrel throw off debris as it
   // explodes. Either way the object stays in this event's selection for the actions that follow.
-  '2:24': (ctx, ace) => {
-    for (const i of targets(ctx, ace)) {
-      i.beginDestroy();
-      i.destroyedByEvent = ctx.event.index;
-      ctx.scene.noteDestroyed(i, ctx.event);
-    }
-  },
+  '2:24': (ctx, ace) => destroy(ctx, ace),
   '2:26': (ctx, ace) => { for (const i of targets(ctx, ace)) i.visible = false; },
   '2:27': (ctx, ace) => { for (const i of targets(ctx, ace)) i.visible = true; },
   '2:81': (ctx, ace) => { for (const i of targets(ctx, ace)) ctx.scene.bringToFront(i); },
@@ -329,8 +373,25 @@ export const ACTIONS: Record<string, ActionFn> = {
   '-2:3': (ctx) => ctx.scene.audio?.stopMusic(),
 
   // Storyboard
+  /**
+   * "Jump to frame", which names the frame it wants in one of two ways.
+   *
+   * Picked from the editor's list, the frame arrives as a plain number that is the frame's
+   * handle, and the manifest's handle table says which frame that is. Worked out at runtime it
+   * arrives as an expression instead, and is then the frame's ordinal, counting from one.
+   *
+   * The two are not interchangeable, and Gunner 4 leans on the second: every screen sets a
+   * counter to the number of the frame it wants and jumps to a dispatcher frame that reads the
+   * counter and jumps on. Reading that counter as a handle sends the whole game sideways, since
+   * the two orderings are a shuffle of each other: the intro asks for frame 7, its title
+   * screen, and as a handle 7 is the save screen, so the game opened on a save it had not made.
+   */
   '-3:2': (ctx, ace) => {
-    const index = ctx.scene.data.frameForHandle(num(ctx, ace, 0));
+    const parameter = param(ace, 0);
+    const value = num(ctx, ace, 0);
+    const index = parameter?.type === 'ParameterExpressions'
+      ? value - 1
+      : ctx.scene.data.frameForHandle(value);
     ctx.scene.onJumpToFrame?.(index);
   },
   '-3:4': (ctx) => { ctx.scene.audio?.stopMusic(); ctx.scene.onEndApplication?.(); },
@@ -346,30 +407,55 @@ export const ACTIONS: Record<string, ActionFn> = {
     ctx.scene.ask(ace.objectInfo, at.x, at.y);
   },
 
-  // The "Direction Calculator" extension points its first parameter's object at the position
-  // named by its second, which is the same job as the built-in "look at" action.
-  '33:82': (ctx, ace) => {
-    const targetId = Number(param(ace, 0)?.data?.['ObjectInfo'] ?? -1);
-    const at = param(ace, 1)?.data;
-    const parentId = Number(at?.['ObjectInfoParent'] ?? -1);
-    const parent = ctx.scene.instancesOf(parentId)[0];
-    if (!parent) return;
-    const x = parent.x + Number(at?.['X'] ?? 0);
-    const y = parent.y + Number(at?.['Y'] ?? 0);
-    for (const i of ctx.scene.instancesOf(targetId)) i.setDirection(angleToDirection(x - i.x, y - i.y));
-  },
-
   // The group marker event's action carries no payload.
   '-1:0': () => {},
 
-  // Save games, through the INI extension.
-  // Each INI object keeps its own place in the file, so every one of these is addressed to the
-  // object the action belongs to. The level reads its progress through one and its weapons
-  // through another, and a shared cursor has them overwrite each other's item.
-  '32:86': (ctx, ace) => ctx.scene.ini.setFile(ace.objectInfo, text(ctx, ace, 0)),
-  '32:80': (ctx, ace) => ctx.scene.ini.setGroup(ace.objectInfo, text(ctx, ace, 0)),
-  '32:81': (ctx, ace) => ctx.scene.ini.setItem(ace.objectInfo, text(ctx, ace, 0)),
-  '32:82': (ctx, ace) => ctx.scene.ini.write(ace.objectInfo, num(ctx, ace, 0)),
+  // Fast loops. "Start loop" runs it there and then; the interpreter owns the iteration.
+  '-1:14': (ctx, ace) => ctx.interpreter.runLoop(text(ctx, ace, 0), num(ctx, ace, 1)),
+  '-1:15': (ctx, ace) => ctx.interpreter.stopLoop(text(ctx, ace, 0)),
+
+  // Scrolling, one axis at a time.
+  '-3:8': (ctx, ace) => ctx.scene.centreOnX(num(ctx, ace, 0)),
+  '-3:9': (ctx, ace) => ctx.scene.centreOnY(num(ctx, ace, 0)),
+
+  // The window, which the page's own controls otherwise handle. Nothing here needs to be told
+  // to the game, so both are left to the shell rather than fought over with it.
+  '-3:14': () => {},
+  '-3:15': () => {},
+
+  // Every sound at once, as opposed to the music.
+  '-2:1': (ctx) => ctx.scene.audio?.stopAll(),
+
+  // The cursor belongs to the page rather than to the frame.
+  '-6:0': (ctx) => ctx.scene.setCursorVisible(false),
+  '-6:1': (ctx) => ctx.scene.setCursorVisible(true),
+
+  // Movement and animation, in the same shape as the actions already above.
+  '2:6': (ctx, ace) => forEach(ctx, ace, (i) => { i.speed = num(ctx, ace, 0); }),
+  '2:15': (ctx, ace) => { for (const i of targets(ctx, ace)) i.animationPaused = true; },
+  '2:16': (ctx, ace) => { for (const i of targets(ctx, ace)) i.animationPaused = false; },
+  // "Force frame" pins the animation to one frame until it is restored.
+  '2:40': (ctx, ace) => forEach(ctx, ace, (i) => i.forceAnimationFrame(num(ctx, ace, 0))),
+  '2:41': (ctx, ace) => { for (const i of targets(ctx, ace)) i.forceAnimationFrame(null); },
+  // Semi-transparency runs 0 (solid) to 128 (invisible), the other way round from an alpha.
+  '2:39': (ctx, ace) => forEach(ctx, ace, (i) => {
+    i.opacity = 1 - Math.min(Math.max(num(ctx, ace, 0), 0), 128) / 128;
+  }),
+
+  /**
+   * "Spread a value": walks the selected instances handing each the next number in turn, which
+   * is how a level gives every one of a group its own index to be addressed by afterwards.
+   */
+  '2:34': (ctx, ace) => {
+    const index = num(ctx, ace, 0);
+    let value = num(ctx, ace, 1);
+    for (const i of [...targets(ctx, ace)].reverse()) i.values[index] = value++;
+  },
+
+  // A text object's string, set outright rather than chosen from its stored paragraphs.
+  '3:88': (ctx, ace) => forEach(ctx, ace, (i) => i.setText(text(ctx, ace, 0))),
+  // The colour it is drawn in, which Fusion stores as a packed BGR number.
+  '3:83': (ctx, ace) => forEach(ctx, ace, (i) => i.setTextColor(colourOf(num(ctx, ace, 0)))),
 
   '-3:7': (ctx, ace) => {
     // With no parent object there is nothing to centre on; Fusion leaves the view alone rather
@@ -381,6 +467,30 @@ export const ACTIONS: Record<string, ActionFn> = {
 };
 
 // ---------------------------------------------------------------- helpers
+
+/**
+ * A colour parameter as CSS.
+ *
+ * Fusion packs a colour into one number with blue in the high byte, which is the reverse of the
+ * order the same three bytes are written in as hex.
+ */
+function colourOf(packed: number): string {
+  const value = packed >>> 0;
+  const red = value & 0xff;
+  const green = (value >> 8) & 0xff;
+  const blue = (value >> 16) & 0xff;
+  return `#${[red, green, blue].map((c) => c.toString(16).padStart(2, '0')).join('')}`;
+}
+
+/** Shared body of the destroy actions, which differ only in which object type they arrive on. */
+function destroy(ctx: Ctx, ace: AceDef): void {
+  for (const i of targets(ctx, ace)) {
+    i.beginDestroy();
+    i.destroyedByEvent = ctx.event.index;
+    ctx.scene.noteDestroyed(i, ctx.event);
+  }
+}
+
 
 function overlap(
   ctx: Ctx,
@@ -677,7 +787,7 @@ function maskToDirection(mask: number): number {
  * diagonal: a 44.65-degree aim is direction 28 to the eye and to the sprite that draws it, and
  * truncating would fire it along 29 while the gun visibly points elsewhere.
  */
-function angleToDirection(dx: number, dy: number): number {
+export function angleToDirection(dx: number, dy: number): number {
   const degrees = (Math.atan2(dy, dx) * 180) / Math.PI;
   const value = Math.round(degrees / -11.25);
   return ((value % DIRECTION_COUNT) + DIRECTION_COUNT) % DIRECTION_COUNT;

@@ -46,6 +46,11 @@ export class GamePackage {
     return this.files[path] !== undefined;
   }
 
+  /** The paths in the package that sit under a directory, for the parts of it that are a set. */
+  under(prefix: string): string[] {
+    return Object.keys(this.files).filter((path) => path.startsWith(prefix));
+  }
+
   bytes(path: string): Uint8Array {
     const file = this.files[path];
     if (!file) throw new Error(`${path} is not in the game package`);

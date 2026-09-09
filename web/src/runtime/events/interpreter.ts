@@ -3,7 +3,8 @@ import type { AceDef, EventDef, FrameEvents, ParamDef } from '../../data/types';
 import type { FusionInstance } from '../instance';
 import type { FrameScene } from '../scene';
 import { evaluate, evaluateString } from './expression';
-import { CONDITIONS, ACTIONS, type Ctx } from './opcodes';
+import { CONDITIONS, ACTIONS, type ActionFn, type ConditionFn, type Ctx } from './opcodes';
+import { extensionOf } from './extensions';
 
 /**
  * Runs a frame's dumped event table.
@@ -95,8 +96,20 @@ export class EventInterpreter {
 
   run(delta: number): void {
     if (!this.started) return;
+    this.pass(delta, null);
+    this.startFlag = false;
+  }
 
+  /**
+   * One walk down the event list.
+   *
+   * `loop` names the fast loop being run, and is null for the ordinary once-a-tick pass. Inside
+   * a loop only the events that ask for it are considered, so a loop costs what its own events
+   * cost rather than a full pass of the table per iteration.
+   */
+  private pass(delta: number, loop: string | null): void {
     for (const event of this.events) {
+      if (loop !== null && !this.mentionsLoop(event)) continue;
       if (!this.groupActive(event.index)) {
         if (this.traced.has(event.index))
           this.note(`t=${this.scene.ticks} ${event.index} skipped: group ` +
@@ -114,14 +127,77 @@ export class EventInterpreter {
         conditionKey: '',
         interpreter: this,
         event,
+        loop,
       };
 
       if (!this.testConditions(ctx, event)) continue;
       if (this.recordFirings) this.noteFiring(event.index);
       this.runActions(ctx, event);
     }
+  }
 
-    this.startFlag = false;
+  // ------------------------------------------------------------------ fast loops
+
+  /** How deep one fast loop may start another, so a loop that starts itself cannot hang the tab. */
+  private static readonly MAX_LOOP_DEPTH = 16;
+
+  private readonly loopIndices = new Map<string, number>();
+  private readonly stoppedLoops = new Set<string>();
+  private loopDepth = 0;
+  /** Events carrying an "on loop" condition, which are the only ones a loop runs. */
+  private loopEvents: Set<number> | null = null;
+
+  private mentionsLoop(event: EventDef): boolean {
+    if (this.loopEvents === null) {
+      this.loopEvents = new Set(
+        this.events
+          .filter((e) => e.conditions.some((c) => c.objectType === -1 && c.num === -16))
+          .map((e) => e.index),
+      );
+    }
+    return this.loopEvents.has(event.index);
+  }
+
+  /**
+   * "Start loop": runs the named loop then and there, before the action after it.
+   *
+   * The iterations happen inside the action that asked for them rather than being spread over
+   * the ticks that follow, which is the whole point of a fast loop: a level uses one to step a
+   * projectile forward a pixel at a time and check what it hit, and all of that has to resolve
+   * within the tick that fired the shot.
+   *
+   * Each iteration is given no elapsed time, so the "every N" timers that pace the game are not
+   * advanced once per iteration by a loop that runs a hundred of them in a tick.
+   */
+  runLoop(name: string, count: number): void {
+    if (name === '' || count <= 0) return;
+    if (this.loopDepth >= EventInterpreter.MAX_LOOP_DEPTH) return;
+
+    this.stoppedLoops.delete(name);
+    this.loopDepth++;
+    try {
+      for (let index = 0; index < count; index++) {
+        if (this.stoppedLoops.has(name)) break;
+        this.loopIndices.set(name, index);
+        this.pass(0, name);
+      }
+    } finally {
+      this.loopDepth--;
+      this.stoppedLoops.delete(name);
+    }
+  }
+
+  /** "Stop loop": the loop finishes the iteration it is in and runs no more. */
+  stopLoop(name: string): void {
+    this.stoppedLoops.add(name);
+  }
+
+  /**
+   * The index a loop has reached, which its events read to know which pass they are on. Fusion
+   * leaves the last index readable after the loop ends, so it is not cleared here.
+   */
+  loopIndex(name: string): number {
+    return this.loopIndices.get(name) ?? 0;
   }
 
   /**
@@ -142,7 +218,7 @@ export class EventInterpreter {
       const condition = event.conditions[index];
       // Handled after the rest have had their say, since it depends on all of them passing.
       if (condition.objectType === -1 && condition.num === -7) continue;
-      const handler = CONDITIONS[opcode(condition)];
+      const handler = CONDITIONS[opcode(condition)] ?? this.extensionHandler(condition, 'condition');
       if (!handler) {
         this.noteUnsupported('condition', condition);
         // An unimplemented condition must not let the event fire on its own.
@@ -169,7 +245,7 @@ export class EventInterpreter {
       // pair instead of on one boolean; a single flag would miss a new pair forming while an
       // older overlap is still in progress.
       if (index === 0 && condition.always === false && !isStructural(condition) &&
-          !tracksItsOwnEdges(condition)) {
+          !tracksItsOwnEdges(condition) && !isTest(condition)) {
         if (!this.risingEdge(ctx.conditionKey, value)) {
           if (once) this.rearmed.set(event.index, true);
           if (this.traced.has(event.index)) this.note(`  -> stopped at ${index}: no rising edge`);
@@ -233,7 +309,7 @@ export class EventInterpreter {
 
   private runActions(ctx: Ctx, event: EventDef): void {
     for (const action of event.actions) {
-      const handler = ACTIONS[opcode(action)];
+      const handler = ACTIONS[opcode(action)] ?? this.extensionHandler(action, 'action');
       if (!handler) {
         this.noteUnsupported('action', action);
         continue;
@@ -276,6 +352,24 @@ export class EventInterpreter {
     return true;
   }
 
+  /**
+   * The handler an extension object's opcode resolves to.
+   *
+   * Extension ACEs count from 80 in a namespace of the extension's own, and which extension a
+   * type number means is decided by the game it was built into, so the lookup goes through the
+   * object rather than through the type. See ./extensions.
+   */
+  private extensionHandler(ace: AceDef, kind: 'condition'): ConditionFn | undefined;
+  private extensionHandler(ace: AceDef, kind: 'action'): ActionFn | undefined;
+  private extensionHandler(ace: AceDef, kind: 'condition' | 'action'): ConditionFn | ActionFn | undefined {
+    if (ace.objectType >= 32) {
+      const set = extensionOf(this.scene.data.objects.get(ace.objectInfo));
+      const own = kind === 'condition' ? set?.conditions?.[ace.num] : set?.actions?.[ace.num];
+      if (own) return own;
+    }
+    return commonHandler(ace, kind);
+  }
+
   private noteUnsupported(kind: string, ace: AceDef): void {
     const id = `${kind} ${opcode(ace)}: ${ace.text}`;
     this.unsupported.set(id, (this.unsupported.get(id) ?? 0) + 1);
@@ -286,13 +380,54 @@ export function opcode(ace: AceDef): string {
   return `${ace.objectType}:${ace.num}`;
 }
 
+/**
+ * The handler for an opcode every object type shares.
+ *
+ * Fusion gives each kind of object its own opcodes from 80 up, but everything below that is the
+ * same set for all of them: destroying, hiding, moving and the alterable values are one
+ * implementation the engine applies to a counter, a text object or an extension exactly as it
+ * does to an Active. They are registered once, against the Active, and reached from the other
+ * types here rather than being listed again under each.
+ */
+function commonHandler(ace: AceDef, kind: 'condition' | 'action'): ConditionFn | ActionFn | undefined {
+  if (ace.objectType <= 2) return undefined;
+  const common = kind === 'condition' ? ace.num > -81 : ace.num < 80;
+  if (!common) return undefined;
+  return kind === 'condition' ? CONDITIONS[`2:${ace.num}`] : ACTIONS[`2:${ace.num}`];
+}
+
 /** Group start/end markers delimit events; they are structure, not state to edge-detect. */
 function isStructural(ace: AceDef): boolean {
   return ace.objectType === -1 && (ace.num === -10 || ace.num === -11);
 }
 
-/** Collision opcodes edge-detect per colliding pair instead of on a single boolean. */
+/**
+ * Conditions that read as a test however they are flagged.
+ *
+ * "Timer is greater than" stays true for the rest of the frame once the clock passes the mark,
+ * and the game writes it as the standing part of an event whose trigger is somewhere else:
+ * "once the screen has settled, and the player clicks this box, start the level". Edge-detecting
+ * it consumes the event at the moment the timer passes, and the click that arrives later then
+ * has nothing left to fire, which is a level-select screen whose boxes do nothing.
+ */
+function isTest(ace: AceDef): boolean {
+  return ace.objectType === -4 && ace.num === -1;
+}
+
+/**
+ * Conditions that decide their own triggering, and must not be edge-detected on top of it.
+ *
+ * Collisions edge-detect per colliding pair rather than on a single boolean, so one flag would
+ * miss a new pair forming while an older overlap is still in progress.
+ *
+ * "On loop" is true for every iteration of the loop it names, and each iteration is a fresh
+ * trigger. Taking only its rising edge lets an event through on the first iteration and never
+ * again, which leaves a loop running its full count while the events that were supposed to do
+ * the work fire once: the level select builds a save file with a chain of loops, each starting
+ * the next as it ends, and the chain stopped dead on the first link.
+ */
 function tracksItsOwnEdges(ace: AceDef): boolean {
+  if (ace.objectType === -1 && ace.num === -16) return true;
   return ace.objectType === 2 && (ace.num === -14 || ace.num === -13);
 }
 
@@ -392,4 +527,23 @@ for (let i = 1; i <= 12; i++) {
 
 export function keysFor(code: number): Keys[] {
   return KEY_MAP[code] ?? [];
+}
+
+/**
+ * The virtual key codes a browser key stands for, which is the table above read backwards.
+ *
+ * One key can answer to more than one code where the codes do not distinguish the two shift or
+ * control keys, so this yields every code that names it.
+ */
+const CODE_MAP = new Map<Keys, number[]>();
+for (const [code, keys] of Object.entries(KEY_MAP)) {
+  for (const key of keys) {
+    const codes = CODE_MAP.get(key);
+    if (codes) codes.push(Number(code));
+    else CODE_MAP.set(key, [Number(code)]);
+  }
+}
+
+export function codesForKey(key: Keys): number[] {
+  return CODE_MAP.get(key) ?? [];
 }
