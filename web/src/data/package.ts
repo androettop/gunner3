@@ -12,8 +12,6 @@ import { unzip } from 'fflate';
  * on disk travels as under 3 MB.
  */
 export class GamePackage {
-  private readonly urls = new Map<string, string>();
-
   private constructor(private readonly files: Record<string, Uint8Array>) {}
 
   /**
@@ -68,19 +66,6 @@ export class GamePackage {
     new Uint8Array(copy).set(data);
     return copy;
   }
-
-  /**
-   * A URL for a file in the package, for the things that can only take one: image decoding,
-   * chiefly. Handed out once per path and kept, since the sprites outlive any one frame.
-   */
-  url(path: string): string {
-    const existing = this.urls.get(path);
-    if (existing) return existing;
-    const blob = new Blob([this.buffer(path)], { type: mimeOf(path) });
-    const url = URL.createObjectURL(blob);
-    this.urls.set(path, url);
-    return url;
-  }
 }
 
 /** Unpacking runs off the main thread: see `fetch` for why that matters. */
@@ -116,17 +101,4 @@ async function readAll(
     at += chunk.length;
   }
   return bytes;
-}
-
-const MIME: Record<string, string> = {
-  png: 'image/png',
-  json: 'application/json',
-  wav: 'audio/wav',
-  ogg: 'audio/ogg',
-  mp3: 'audio/mpeg',
-  mid: 'audio/midi',
-};
-
-function mimeOf(path: string): string {
-  return MIME[path.slice(path.lastIndexOf('.') + 1).toLowerCase()] ?? 'application/octet-stream';
 }

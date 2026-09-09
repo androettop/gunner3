@@ -51,8 +51,9 @@ export class GameData {
     return loaded;
   }
 
-  imageUrl(handle: number): string {
-    return this.pkg.url(`images/${handle}.png`);
+  /** A sprite's PNG bytes, straight out of the package, for the decoder to read. */
+  imageBytes(handle: number): Uint8Array {
+    return this.pkg.bytes(`images/${handle}.png`);
   }
 
   soundBytes(sound: SoundDef): ArrayBuffer {
