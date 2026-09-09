@@ -3,6 +3,7 @@
 use crate::audio::{Music, Sound};
 use crate::events::{self, Event};
 use crate::frames::Frame;
+use crate::fonts::Font;
 use crate::images::Image;
 use crate::json::Json;
 use crate::objects::{self, Object};
@@ -38,6 +39,7 @@ pub struct Game<'a> {
     pub frames: &'a [Frame],
     pub objects: &'a [Object],
     pub images: &'a [Image],
+    pub fonts: &'a [Font],
     pub sounds: &'a [Sound],
     pub music: &'a [Music],
 }
@@ -76,6 +78,14 @@ impl Game<'_> {
                 ("name", Json::text(&m.name)),
                 ("file", Json::text(format!("{}.mid", m.handle))),
                 ("frequency", Json::int(0)),
+            ])).collect())),
+            ("fonts", Json::Array(self.fonts.iter().map(|f| Json::object(vec![
+                ("handle", Json::int(f.handle as i64)),
+                ("face", Json::text(&f.face)),
+                ("size", Json::int(f.size as i64)),
+                ("weight", Json::int(f.weight as i64)),
+                ("italic", Json::Bool(f.italic)),
+                ("underline", Json::Bool(f.underline)),
             ])).collect())),
             ("images", Json::Array(self.images.iter().map(|i| Json::object(vec![
                 ("handle", Json::int(i.handle as i64)),

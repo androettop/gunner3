@@ -4,6 +4,7 @@ mod audio;
 mod bank;
 mod chunk;
 mod events;
+mod fonts;
 mod frames;
 mod images;
 mod installer;
@@ -72,6 +73,15 @@ fn main() -> ExitCode {
         .map(|c| audio::read_sounds(&c.data)).transpose().unwrap_or_default().unwrap_or_default();
     let music = chunks.iter().find(|c| c.id == 26217)
         .map(|c| audio::read_music(&c.data)).transpose().unwrap_or_default().unwrap_or_default();
+    let fonts = chunks.iter().find(|c| c.id == 26215)
+        .map(|c| fonts::read(&c.data)).transpose().unwrap_or_default().unwrap_or_default();
+    println!("{} fonts", fonts.len());
+    for font in &fonts {
+        println!("  {:>2}  {:<20} {}px  weight {}{}{}", font.handle, font.face, font.size,
+            font.weight,
+            if font.italic { " italic" } else { "" },
+            if font.underline { " underline" } else { "" });
+    }
     let images = chunks.iter().find(|c| c.id == 26214)
         .map(|c| images::read_bank(&c.data)).transpose().unwrap_or_default().unwrap_or_default();
 
@@ -98,6 +108,7 @@ fn main() -> ExitCode {
         frames: &frames,
         objects: &objects,
         images: &images,
+        fonts: &fonts,
         sounds: &sounds,
         music: &music,
     };

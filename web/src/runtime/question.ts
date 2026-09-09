@@ -1,6 +1,7 @@
 import { Canvas } from 'excalibur';
-import type { ObjectDef } from '../data/types';
+import type { FontDef, ObjectDef } from '../data/types';
 import { isCommon } from '../data/types';
+import { cssFont, fontOr } from './fonts';
 
 /**
  * Fusion's Question object.
@@ -26,8 +27,13 @@ const FACE = '#c0c0c0';
 const PRESSED_FACE = '#808080';
 const EDGE = '#000000';
 
-/** Text objects are drawn with this too: the fonts themselves are not in the extracted data. */
-const FONT = '12px monospace';
+/**
+ * The font a question is written in, which the game names along with the words.
+ *
+ * Measuring, laying out and drawing all have to agree on it, and a question is laid out once
+ * and drawn from that, so it is set as the question is read and holds until the next one.
+ */
+let font = cssFont(fontOr(undefined));
 
 export interface QuestionItem {
   text: string;
@@ -56,10 +62,14 @@ export interface PendingQuestion {
 }
 
 /** Reads an object's paragraphs as a question and its answers, or null if it has none. */
-export function questionFor(def: ObjectDef): { question: QuestionItem; answers: QuestionItem[] } | null {
+export function questionFor(
+  def: ObjectDef,
+  fonts: Map<number, FontDef>,
+): { question: QuestionItem; answers: QuestionItem[] } | null {
   if (!isCommon(def.detail)) return null;
   const paragraphs = def.detail.paragraphs ?? [];
   if (!paragraphs.length) return null;
+  font = cssFont(fontOr(fonts.get(paragraphs[0].font)));
   const items = paragraphs.map((p) => ({ text: p.text, color: p.color }));
   return { question: items[0], answers: items.slice(1) };
 }
@@ -74,7 +84,7 @@ function measuringContext(): CanvasRenderingContext2D | null {
 function measure(text: string): { width: number; height: number } {
   const context = measuringContext();
   if (!context) return { width: text.length * 7, height: 14 };
-  context.font = FONT;
+  context.font = font;
   const metrics = context.measureText(text);
   const ascent = metrics.fontBoundingBoxAscent ?? metrics.actualBoundingBoxAscent ?? 10;
   const descent = metrics.fontBoundingBoxDescent ?? metrics.actualBoundingBoxDescent ?? 3;
@@ -161,7 +171,7 @@ export function questionGraphic(
       context.clearRect(0, 0, layout.width, layout.height);
       drawPanel(context, 0, 0, layout.width, layout.height, FACE);
 
-      context.font = FONT;
+      context.font = font;
       context.textAlign = 'center';
       context.textBaseline = 'middle';
       drawLine(context, layout.question, layout.width);

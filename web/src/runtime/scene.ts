@@ -68,7 +68,7 @@ export class FrameScene extends Scene {
   ask(objectId: number, x: number, y: number): void {
     if (this.questionOpen) return;
     const def = this.data.objects.get(objectId);
-    const items = def ? questionFor(def) : null;
+    const items = def ? questionFor(def, this.data.fonts) : null;
     if (!items || !items.answers.length) return;
 
     const layout = layOut(items.question, items.answers);

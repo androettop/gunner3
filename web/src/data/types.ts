@@ -140,6 +140,22 @@ export interface FrameDef {
   events: string;
 }
 
+/**
+ * A font as the game's author picked it in the editor, straight out of the Windows `LOGFONT`
+ * it was stored as.
+ */
+export interface FontDef {
+  handle: number;
+  /** The face as Windows named it: `Terminal`, `Arial`, and so on. */
+  face: string;
+  /** Character height in pixels. */
+  size: number;
+  /** 400 for regular and 700 for bold, as Windows and CSS both count it. */
+  weight: number;
+  italic: boolean;
+  underline: boolean;
+}
+
 export interface SoundDef {
   handle: number;
   name: string;
@@ -174,6 +190,7 @@ export interface GameManifest {
   sounds: SoundDef[];
   music: MusicDef[];
   images: ImageMeta[];
+  fonts: FontDef[];
 }
 
 /** One condition or action inside an event. */

@@ -1,6 +1,9 @@
-import { Actor, Color, Font, FontUnit, Text, Vector } from 'excalibur';
+import {
+  Actor, Color, Font, FontStyle, FontUnit, ImageFiltering, Text, Vector,
+} from 'excalibur';
 import type { GameData } from '../data/loader';
 import { isBackdrop, isCommon, isQuickBackdrop, type DirectionData, type ObjectDef } from '../data/types';
+import { fontFamily, fontOr } from './fonts';
 import type { SpriteStore } from './sprites';
 import { initialState, type MovementState } from './movement';
 
@@ -391,10 +394,21 @@ export class FusionInstance {
 
     if (this.renderedParagraph !== paragraph.text) {
       this.renderedParagraph = paragraph.text;
+      // The paragraph names one of the game's own fonts, which is a face and a size rather
+      // than any letters: what the machine makes of that name is what the text is written in.
+      const font = fontOr(this.data.fonts.get(paragraph.font));
       const text = new Text({
         text: paragraph.text,
         color: Color.fromHex(paragraph.color),
-        font: new Font({ family: 'monospace', size: 12, unit: FontUnit.Px }),
+        font: new Font({
+          family: fontFamily(font),
+          size: font.size,
+          unit: FontUnit.Px,
+          bold: font.weight >= 700,
+          style: font.italic ? FontStyle.Italic : FontStyle.Normal,
+          // A face drawn in whole pixels is spoiled by being smoothed into place.
+          filtering: ImageFiltering.Pixel,
+        }),
       });
       this.actor.graphics.use(text);
       this.actor.graphics.offset = new Vector(text.width / 2, text.height / 2);

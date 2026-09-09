@@ -1,5 +1,5 @@
 import type {
-  FrameDef, FrameEvents, GameManifest, ImageMeta, ObjectDef, SoundDef, MusicDef,
+  FontDef, FrameDef, FrameEvents, GameManifest, ImageMeta, ObjectDef, SoundDef, MusicDef,
 } from './types';
 import type { GamePackage } from './package';
 
@@ -13,6 +13,7 @@ export class GameData {
   readonly objects = new Map<number, ObjectDef>();
   readonly sounds = new Map<number, SoundDef>();
   readonly music = new Map<number, MusicDef>();
+  readonly fonts = new Map<number, FontDef>();
   private readonly events = new Map<number, FrameEvents>();
 
   private constructor(manifest: GameManifest, private readonly pkg: GamePackage) {
@@ -21,6 +22,7 @@ export class GameData {
     for (const object of manifest.objects) this.objects.set(object.id, object);
     for (const sound of manifest.sounds) this.sounds.set(sound.handle, sound);
     for (const track of manifest.music) this.music.set(track.handle, track);
+    for (const font of manifest.fonts ?? []) this.fonts.set(font.handle, font);
   }
 
   static load(pkg: GamePackage): GameData {
