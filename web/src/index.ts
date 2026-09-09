@@ -182,7 +182,7 @@ export async function play(options: PlayOptions): Promise<Game> {
     layouts ?? [],
     DEFAULT_CHROME,
     (handle) => silhouetteFrom(sprites.source(handle)),
-    shellFor(engine, layouts !== null),
+    shellFor(engine, audio, layouts !== null),
     reading,
   );
 
@@ -241,7 +241,7 @@ const DISPLAY_MODES: DisplayMode[] = [DisplayMode.Fixed, DisplayMode.FitScreen];
  * asked of the whole document rather than of the canvas, so that the controls, which are not in
  * the canvas, come along with it.
  */
-function shellFor(engine: Engine, touch: boolean): Shell {
+function shellFor(engine: Engine, audio: AudioBank, touch: boolean): Shell {
   const screen = engine.screen;
   // The size the game was drawn for, which is what "fixed" means. Fitting the game leaves the
   // fitted size behind in the viewport, so going back to its own size has to say so.
@@ -255,16 +255,28 @@ function shellFor(engine: Engine, touch: boolean): Shell {
     // the only way to ask for it from outside.
     window.dispatchEvent(new Event('resize'));
   };
-  let at = Math.max(0, DISPLAY_MODES.indexOf(screen.displayMode));
 
   return {
     isFullscreen: () => document.fullscreenElement !== null,
+    displayModes: () => [...DISPLAY_MODES],
     displayMode: () => screen.displayMode,
-    cycleDisplayMode() {
-      at = (at + 1) % DISPLAY_MODES.length;
-      setMode(DISPLAY_MODES[at]);
-      return screen.displayMode;
+    setDisplayMode(mode) {
+      const wanted = DISPLAY_MODES.find((known) => known === mode);
+      if (wanted) setMode(wanted);
     },
+    smoothing: () => screen.antialiasing,
+    setSmoothing(on) {
+      // Two things smooth a game on its way to the screen: how its own drawing is sampled, and
+      // how the finished picture is stretched to fit. The second is the one that is seen.
+      screen.antialiasing = on;
+      const rendering = screen as unknown as Record<string, string>;
+      rendering._canvasImageRendering = on ? 'auto' : 'pixelated';
+      screen.applyResolutionAndViewport();
+    },
+    musicVolume: () => audio.musicVolume,
+    setMusicVolume: (volume) => { audio.musicVolume = volume; },
+    effectsVolume: () => audio.effectsVolume,
+    setEffectsVolume: (volume) => { audio.effectsVolume = volume; },
     async toggleFullscreen() {
       try {
         if (document.fullscreenElement) {

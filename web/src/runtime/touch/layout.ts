@@ -25,11 +25,11 @@ export type TouchIcon =
   | { kind: 'caret'; towards: 'left' | 'right' }
   /** Four corners, which turn inwards once the screen is already full. */
   | { kind: 'fullscreen' }
-  /** A picture within a screen, redrawn to match whichever way the game is being fitted. */
-  | { kind: 'display-mode' };
+  /** A cogwheel, for the panel the settings sit behind. */
+  | { kind: 'settings' };
 
 /** What a button does to the page rather than to the game. */
-export type TouchAction = 'fullscreen' | 'display-mode';
+export type TouchAction = 'fullscreen' | 'settings';
 
 export type TouchCorner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
 
@@ -107,15 +107,14 @@ const CHROME_SIZE = 0.45;
  * The buttons that are up on every frame of every game, whether or not it is being played by
  * touch.
  *
- * How the game is fitted to the screen is a property of the page and not of the frame, and it is
- * as worth reaching on a desktop as on a phone. These sit in a row in the top corner, in the
- * order given, so `x` and `y` are not read for them. These sit in a row in the top corner, in the
- * order given, so `x` and `y` are not read for them.
+ * How the game is fitted to the screen and how loud it is are properties of the page and not of
+ * the frame, and they are as worth reaching on a desktop as on a phone. These sit in a row in
+ * the top corner, in the order given, so `x` and `y` are not read for them.
  */
 export const DEFAULT_CHROME: TouchButton[] = [
-  { id: 'fullscreen', keys: [], action: 'fullscreen', icon: { kind: 'fullscreen' },
+  { id: 'settings', keys: [], action: 'settings', icon: { kind: 'settings' },
     pin: { corner: 'top-left' }, size: CHROME_SIZE },
-  { id: 'display-mode', keys: [], action: 'display-mode', icon: { kind: 'display-mode' },
+  { id: 'fullscreen', keys: [], action: 'fullscreen', icon: { kind: 'fullscreen' },
     pin: { corner: 'top-left' }, size: CHROME_SIZE },
 ];
 

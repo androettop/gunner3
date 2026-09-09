@@ -24,9 +24,18 @@ export type Reading = (objectName: string) => number | null;
 export interface Shell {
   isFullscreen(): boolean;
   toggleFullscreen(): Promise<void>;
-  /** Moves to the next way of fitting the game to the screen, and says which that is. */
-  cycleDisplayMode(): string;
+  /** The ways of fitting the game to the screen, and which of them is in use. */
+  displayModes(): string[];
   displayMode(): string;
+  setDisplayMode(mode: string): void;
+  /** Whether the game is smoothed as it is scaled up, or left in its own square pixels. */
+  smoothing(): boolean;
+  setSmoothing(on: boolean): void;
+  /** How loud the music and the game's own sounds are, from silent at 0 to as written at 1. */
+  musicVolume(): number;
+  setMusicVolume(volume: number): void;
+  effectsVolume(): number;
+  setEffectsVolume(volume: number): void;
 }
 
 /**
@@ -132,17 +141,91 @@ export class ControlOverlay {
     this.root.remove();
   }
 
-  /** Redraws the two buttons that show a state rather than only causing one. */
+  /** Redraws whatever shows a state rather than only causing one. */
   private readonly place = (): void => {
     const full = this.shell.isFullscreen();
     for (const icon of Array.from(this.root.querySelectorAll('.is-fullscreen'))) {
       icon.classList.toggle('is-inside', full);
     }
     const mode = this.shell.displayMode();
-    for (const icon of Array.from(this.root.querySelectorAll('.is-display-mode'))) {
-      icon.querySelector('.inner')?.setAttribute('d', INNER_SCREEN[mode] ?? INNER_SCREEN.Fixed);
+    for (const option of Array.from(this.root.querySelectorAll('[data-mode]'))) {
+      option.classList.toggle('is-on', option.getAttribute('data-mode') === mode);
     }
   };
+
+  /** The panel the settings sit behind, which is up or down and nothing in between. */
+  private toggleSettings(): void {
+    const open = this.root.querySelector('.fusion-touch-panel');
+    if (open) {
+      open.remove();
+      return;
+    }
+    this.root.append(this.settingsPanel());
+    this.place();
+  }
+
+  private settingsPanel(): HTMLElement {
+    const panel = document.createElement('div');
+    panel.className = 'fusion-touch-panel';
+
+    const modes = document.createElement('div');
+    modes.className = 'fusion-touch-choice';
+    for (const mode of this.shell.displayModes()) {
+      const option = document.createElement('button');
+      option.type = 'button';
+      option.className = 'fusion-touch-option';
+      option.setAttribute('data-mode', mode);
+      option.setAttribute('aria-label', `screen-${mode}`);
+      option.append(screenIcon(mode));
+      option.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        this.shell.setDisplayMode(mode);
+        this.place();
+      });
+      modes.append(option);
+    }
+    panel.append(row('Screen', modes));
+    panel.append(row('Smooth', this.toggle('smoothing', this.shell.smoothing(), (on) => {
+      this.shell.setSmoothing(on);
+    })));
+
+    panel.append(row('Music', this.slider('music', this.shell.musicVolume(), (volume) => {
+      this.shell.setMusicVolume(volume);
+    })));
+    panel.append(row('Effects', this.slider('effects', this.shell.effectsVolume(), (volume) => {
+      this.shell.setEffectsVolume(volume);
+    })));
+    return panel;
+  }
+
+  private toggle(name: string, on: boolean, onChange: (on: boolean) => void): HTMLElement {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'fusion-touch-switch';
+    button.setAttribute('aria-label', name);
+    button.setAttribute('aria-pressed', String(on));
+    button.append(document.createElement('span'));
+    button.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      const next = button.getAttribute('aria-pressed') !== 'true';
+      button.setAttribute('aria-pressed', String(next));
+      onChange(next);
+    });
+    return button;
+  }
+
+  private slider(name: string, at: number, onChange: (volume: number) => void): HTMLElement {
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.className = 'fusion-touch-slider';
+    slider.min = '0';
+    slider.max = '100';
+    slider.step = '1';
+    slider.value = String(Math.round(at * 100));
+    slider.setAttribute('aria-label', `${name}-volume`);
+    slider.addEventListener('input', () => onChange(Number(slider.value) / 100));
+    return slider;
+  }
 
   private get width(): number {
     return this.root.clientWidth || window.innerWidth;
@@ -227,9 +310,8 @@ export class ControlOverlay {
 
       if (button.action === 'fullscreen') {
         void this.shell.toggleFullscreen().then(this.place);
-      } else if (button.action === 'display-mode') {
-        this.shell.cycleDisplayMode();
-        this.place();
+      } else if (button.action === 'settings') {
+        this.toggleSettings();
       } else if (button.cycle) {
         // A cycle keeps its own place in the list: the game selects a weapon by its own key and
         // never says which one it has, so the arrows walk the list rather than follow the game.
@@ -280,19 +362,11 @@ export class ControlOverlay {
     svg.setAttribute('class', 'fusion-touch-icon');
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
 
-    if (icon.kind === 'display-mode') {
-      // A screen with the game inside it, drawn the way the game is currently being fitted.
-      svg.classList.add('is-display-mode');
-      const screen = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      screen.setAttribute('fill', 'none');
-      screen.setAttribute('stroke', 'currentColor');
-      screen.setAttribute('stroke-width', '9');
-      screen.setAttribute('stroke-linejoin', 'round');
-      screen.setAttribute('d', 'M10 20 H90 V80 H10 Z');
-      path.setAttribute('class', 'inner');
-      path.setAttribute('fill', 'currentColor');
-      path.setAttribute('d', INNER_SCREEN.Fixed);
-      svg.append(screen, path);
+    if (icon.kind === 'settings') {
+      // A cogwheel: a ring of teeth around a hole.
+      path.setAttribute('fill-rule', 'evenodd');
+      path.setAttribute('d', COG);
+      svg.append(path);
       return svg;
     }
 
@@ -392,6 +466,8 @@ function style(): HTMLStyleElement {
      width both times so that it is the same distance across as it is down. A share of the
      screen while it is played by thumb, and a fixed step when the buttons are only furniture. */
   --gap: 1.75vw;
+  /* The panel is read rather than reached for, so it stops growing before a button does. */
+  --panel: min(var(--button), 90px);
   /* No cap while the game is being played by thumb: a button is as big as the screen allows. */
   --cap: 100000px;
   /* The overlay is a frame for the controls and nothing else. Everything that is not a button
@@ -508,6 +584,90 @@ function style(): HTMLStyleElement {
   image-rendering: pixelated;
 }
 svg.fusion-touch-icon { background: none; }
+
+/* A button is a shape to see the game through; a panel is a thing to read, so it is a sheet of
+   the same white rather than a tint of it. */
+.fusion-touch-panel {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--gap) * 1.1);
+  padding: calc(var(--gap) * 1.8) calc(var(--gap) * 2.2);
+  border-radius: calc(var(--gap) * 1.4);
+  background: rgba(246, 247, 250, 0.93);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 calc(var(--gap) * 0.5) calc(var(--gap) * 2) rgba(0, 0, 0, 0.45);
+  color: rgba(18, 20, 26, 0.92);
+  font: 600 calc(var(--panel) * 0.19) ui-sans-serif, system-ui, sans-serif;
+  pointer-events: auto;
+  touch-action: none;
+}
+.fusion-touch-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--gap) * 2.4);
+}
+.fusion-touch-label { white-space: nowrap; }
+.fusion-touch-choice { display: flex; gap: calc(var(--gap) * 0.7); }
+.fusion-touch-option {
+  width: calc(var(--panel) * 0.42);
+  height: calc(var(--panel) * 0.42);
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(18, 20, 26, 0.09);
+  color: rgba(18, 20, 26, 0.55);
+  display: grid;
+  place-items: center;
+  pointer-events: auto;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+/* The way the game is being fitted right now. */
+.fusion-touch-option.is-on {
+  background: rgba(18, 20, 26, 0.86);
+  color: rgba(246, 247, 250, 0.95);
+}
+/* A switch: a track with a knob at one end or the other. */
+.fusion-touch-switch {
+  width: calc(var(--panel) * 0.8);
+  height: calc(var(--panel) * 0.42);
+  padding: 0;
+  border: none;
+  border-radius: calc(var(--panel) * 0.21);
+  background: rgba(18, 20, 26, 0.14);
+  display: flex;
+  align-items: center;
+  pointer-events: auto;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 90ms linear;
+}
+.fusion-touch-switch > span {
+  width: calc(var(--panel) * 0.34);
+  height: calc(var(--panel) * 0.34);
+  margin: 0 calc(var(--panel) * 0.04);
+  border-radius: 50%;
+  background: rgba(246, 247, 250, 0.95);
+  transition: transform 90ms linear;
+}
+.fusion-touch-switch[aria-pressed='true'] { background: rgba(18, 20, 26, 0.86); }
+.fusion-touch-switch[aria-pressed='true'] > span {
+  transform: translateX(calc(var(--panel) * 0.38));
+}
+.fusion-touch-slider {
+  width: calc(var(--panel) * 1.6);
+  height: calc(var(--panel) * 0.42);
+  margin: 0;
+  accent-color: rgba(18, 20, 26, 0.86);
+  pointer-events: auto;
+  touch-action: none;
+}
 .fusion-touch-icon.is-fullscreen { width: 52%; height: 52%; }
 /* Full already: the same corners, turned inwards. */
 .fusion-touch-icon.is-fullscreen.is-inside { transform: rotate(180deg); }
@@ -520,6 +680,41 @@ const INNER_SCREEN: Record<string, string> = {
   Fixed: 'M38 40 H62 V60 H38 Z',
   FitScreen: 'M22 32 H78 V68 H22 Z',
 };
+
+/** A ring of teeth around a hole, laid out evenly rather than drawn by eye. */
+const COG = 'M83.8 53.3 L94.0 63.4 L90.6 71.7 L76.3 71.6 L71.6 76.3 L71.7 90.6 L63.4 94.0 L53.3 83.8 L46.7 83.8 L36.6 94.0 L28.3 90.6 L28.4 76.3 L23.7 71.6 L9.4 71.7 L6.0 63.4 L16.2 53.3 L16.2 46.7 L6.0 36.6 L9.4 28.3 L23.7 28.4 L28.4 23.7 L28.3 9.4 L36.6 6.0 L46.7 16.2 L53.3 16.2 L63.4 6.0 L71.7 9.4 L71.6 23.7 L76.3 28.4 L90.6 28.3 L94.0 36.6 L83.8 46.7 Z M35.0 50.0 C35.0 41.7 41.7 35.0 50.0 35.0 C58.3 35.0 65.0 41.7 65.0 50.0 C65.0 58.3 58.3 65.0 50.0 65.0 C41.7 65.0 35.0 58.3 35.0 50.0 Z';
+
+/** A screen with the game inside it, drawn the size that way of fitting it gives. */
+function screenIcon(mode: string): SVGElement {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 100 100');
+  svg.setAttribute('class', 'fusion-touch-icon');
+
+  const screen = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  screen.setAttribute('fill', 'none');
+  screen.setAttribute('stroke', 'currentColor');
+  screen.setAttribute('stroke-width', '9');
+  screen.setAttribute('stroke-linejoin', 'round');
+  screen.setAttribute('d', 'M10 20 H90 V80 H10 Z');
+
+  const inner = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  inner.setAttribute('fill', 'currentColor');
+  inner.setAttribute('d', INNER_SCREEN[mode] ?? INNER_SCREEN.Fixed);
+
+  svg.append(screen, inner);
+  return svg;
+}
+
+/** One line of the settings panel: what it is on the left, and what sets it on the right. */
+function row(label: string, control: HTMLElement): HTMLElement {
+  const line = document.createElement('div');
+  line.className = 'fusion-touch-line';
+  const name = document.createElement('span');
+  name.className = 'fusion-touch-label';
+  name.textContent = label;
+  line.append(name, control);
+  return line;
+}
 
 /** How wide a silhouette is drawn before the button scales it, in whole sprite pixels. */
 const SILHOUETTE_WIDTH = 256;

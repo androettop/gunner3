@@ -15,8 +15,32 @@ export class AudioBank {
   private readonly scores = new Map<number, ArrayBuffer>();
   private synth: MusicSynth | null = null;
   private masterGain: GainNode | null = null;
+  /** The music and the sounds are turned down apart from each other, and from everything. */
+  private musicGain: GainNode | null = null;
+  private effectsGain: GainNode | null = null;
+  private wanted = { music: 1, effects: 1 };
 
   constructor(private readonly data: GameData) {}
+
+  /** How loud the music plays, from silent at 0 to as written at 1. */
+  get musicVolume(): number {
+    return this.wanted.music;
+  }
+
+  set musicVolume(volume: number) {
+    this.wanted.music = clamp(volume);
+    if (this.musicGain) this.musicGain.gain.value = this.wanted.music;
+  }
+
+  /** How loud the game's own sounds play. */
+  get effectsVolume(): number {
+    return this.wanted.effects;
+  }
+
+  set effectsVolume(volume: number) {
+    this.wanted.effects = clamp(volume);
+    if (this.effectsGain) this.effectsGain.gain.value = this.wanted.effects;
+  }
 
   /** Browsers only allow an AudioContext to start after a user gesture. */
   private ensureContext(): AudioContext | null {
@@ -26,6 +50,14 @@ export class AudioBank {
         this.masterGain = this.context.createGain();
         this.masterGain.gain.value = 0.6;
         this.masterGain.connect(this.context.destination);
+
+        this.musicGain = this.context.createGain();
+        this.musicGain.gain.value = this.wanted.music;
+        this.musicGain.connect(this.masterGain);
+
+        this.effectsGain = this.context.createGain();
+        this.effectsGain.gain.value = this.wanted.effects;
+        this.effectsGain.connect(this.masterGain);
       } catch (e) {
         console.warn(`no audio: ${e}`);
         return null;
@@ -70,8 +102,8 @@ export class AudioBank {
       }),
       (async () => {
         try {
-          if (context && this.masterGain && this.data.hasSoundfont) {
-            const synth = new MusicSynth(context, this.masterGain);
+          if (context && this.musicGain && this.data.hasSoundfont) {
+            const synth = new MusicSynth(context, this.musicGain);
             await synth.start(this.data.soundfontBytes());
             this.synth = synth;
           }
@@ -86,10 +118,10 @@ export class AudioBank {
   playSample(handle: number): void {
     const context = this.ensureContext();
     const buffer = this.samples.get(handle);
-    if (!context || !buffer || !this.masterGain) return;
+    if (!context || !buffer || !this.effectsGain) return;
     const source = context.createBufferSource();
     source.buffer = buffer;
-    source.connect(this.masterGain);
+    source.connect(this.effectsGain);
     source.start();
   }
 
@@ -103,4 +135,8 @@ export class AudioBank {
   stopMusic(): void {
     this.synth?.stop();
   }
+}
+
+function clamp(volume: number): number {
+  return Math.min(1, Math.max(0, Number.isFinite(volume) ? volume : 0));
 }
