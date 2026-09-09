@@ -121,8 +121,9 @@ export async function play(options: PlayOptions): Promise<Game> {
     sprites = new SpriteStore(data, await new Preloader(data).loadAll(report));
 
     audio = new AudioBank(data);
-    const audioTotal = data.sounds.size + data.music.size;
-    await audio.load((loaded) => report({ loaded, total: audioTotal, label: 'Loading audio' }));
+    // The bank says how much there is to do: the instruments its music needs are one more thing
+    // to load than the sounds and the scores, and counting them out here read one over the total.
+    await audio.load((loaded, total) => report({ loaded, total, label: 'Loading audio' }));
   });
 
   // Save state outlives any single frame, and so do the objects the game marks global: a load
