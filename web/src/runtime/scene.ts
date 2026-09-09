@@ -263,6 +263,21 @@ export class FrameScene extends Scene {
   }
 
   /**
+   * Brings the camera's drawn position up to where the camera now is.
+   *
+   * What is on screen, and so what is worth drawing, is judged against where the camera was
+   * last drawn, and that is only settled once drawing starts, after this. A camera that has
+   * moved this tick is therefore judged against where it was on the last one, and whatever it
+   * has just uncovered is left out of the very frame that uncovers it and appears on the next.
+   * Slowly that is invisible; at the speed a level scrolls it is a strip of missing scenery
+   * down the leading edge of the view. The game moves its own camera from its own events, which
+   * have just run, so by here there is nothing left to wait for.
+   */
+  onPostUpdate(): void {
+    this.camera.pos.clone(this.camera.drawPos);
+  }
+
+  /**
    * Takes away what has travelled out of the level.
    *
    * Nothing stops an object at the frame's edge, so a shot that misses keeps going, and without
