@@ -208,6 +208,33 @@ export async function play(options: PlayOptions): Promise<Game> {
 
   await show(0);
 
+  /**
+   * A game in a window nobody is looking at stops where it is, sound and all.
+   *
+   * The clock is what the whole loop hangs off, so stopping it leaves the last frame on screen
+   * and the game exactly as it stood. Both the window's focus and the tab's own are watched,
+   * since a tab can be hidden without the window losing focus and a window can lose focus with
+   * the tab still showing.
+   */
+  const watch = (awake: boolean) => {
+    if (awake === engine.clock.isRunning()) return;
+    if (awake) {
+      engine.clock.start();
+      audio.wake();
+    } else {
+      engine.clock.stop();
+      audio.sleep();
+    }
+  };
+  const lostFocus = () => watch(false);
+  const gotFocus = () => watch(true);
+  const visibilityChanged = () => watch(!document.hidden && document.hasFocus());
+  window.addEventListener('blur', lostFocus);
+  window.addEventListener('focus', gotFocus);
+  document.addEventListener('visibilitychange', visibilityChanged);
+  // The window may have been left while the game was still loading.
+  visibilityChanged();
+
   return {
     engine,
     data,
@@ -217,6 +244,9 @@ export async function play(options: PlayOptions): Promise<Game> {
     stop() {
       document.removeEventListener('pointerdown', resume);
       document.removeEventListener('keydown', resume);
+      window.removeEventListener('blur', lostFocus);
+      window.removeEventListener('focus', gotFocus);
+      document.removeEventListener('visibilitychange', visibilityChanged);
       audio.stopMusic();
       overlay?.destroy();
       engine.stop();

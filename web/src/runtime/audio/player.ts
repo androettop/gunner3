@@ -72,6 +72,21 @@ export class AudioBank {
   }
 
   /**
+   * Silences the game while nobody is watching it, and picks it up where it left off.
+   *
+   * Suspending the context stops the music mid-note and starts it again on that note, which is
+   * what the player left behind. Nothing is started here that was not already going: the first
+   * sound of all still waits for the gesture the browser wants before it.
+   */
+  sleep(): void {
+    if (this.context?.state === 'running') void this.context.suspend();
+  }
+
+  wake(): void {
+    if (this.context?.state === 'suspended') void this.context.resume();
+  }
+
+  /**
    * Decodes every sound, takes the scores as they are, and puts the synthesiser up.
    *
    * The scores are bytes until they are played: parsing one costs nothing next to the
