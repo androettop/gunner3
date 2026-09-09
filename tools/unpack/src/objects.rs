@@ -230,6 +230,12 @@ pub struct Counter {
     pub width: u16,
     pub height: u16,
     pub frames: Vec<u16>,
+    /// How a bar is filled, in the same terms a quick backdrop's shape is.
+    pub shape: Option<Shape>,
+    /// The image a motif-filled bar is tiled with.
+    pub image: u16,
+    /// A bar that empties the way it would otherwise fill.
+    pub inverse: bool,
 }
 
 /// A backdrop's properties, and a quick backdrop's, which add a shape to them.
@@ -242,6 +248,7 @@ pub struct Backdrop {
     pub shape: Option<Shape>,
 }
 
+#[derive(Clone)]
 pub struct Shape {
     pub border_size: u16,
     pub border_color: String,
@@ -281,33 +288,40 @@ pub fn read_backdrop(data: &[u8], quick: bool) -> Option<Backdrop> {
         });
     }
 
-    // The shape is not a fixed record: the colours are only there for the fills that use them,
-    // so the image handle that follows sits at a different place depending on the fill. Reading
-    // it at one offset gives the tiled backdrops an image of zero, and a level whose ground is
-    // missing is a level the player falls out of.
-    let fill_type = word(data, 20)?;
-    let (color1, color2, vertical_gradient, image_at) = match fill_type {
-        1 => (colour(data, 22), String::from("#FFFFFF"), false, 26),
-        2 => (colour(data, 22), colour(data, 26), word(data, 30)? != 0, 32),
-        _ => (String::from("#FFFFFF"), String::from("#FFFFFF"), false, 22),
-    };
-
+    let (shape, image) = read_shape(data, 12)?;
     Some(Backdrop {
         obstacle_type,
         collision_type,
         width: word(data, 8)?,
         height: word(data, 10)?,
-        image: word(data, image_at)?,
-        shape: Some(Shape {
-            border_size: word(data, 12)?,
-            border_color: colour(data, 14),
-            shape_type: word(data, 18)?,
-            fill_type,
-            color1,
-            color2,
-            vertical_gradient,
-        }),
+        image,
+        shape: Some(shape),
     })
+}
+
+/// A shape, and the image handle that follows it, from the byte it starts at.
+///
+/// It is not a fixed record: the colours are only there for the fills that use them, so what
+/// comes after sits at a different place depending on the fill. Reading the image at one offset
+/// gives the tiled backdrops an image of zero, and a level whose ground is missing is a level the
+/// player falls out of.
+fn read_shape(data: &[u8], at: usize) -> Option<(Shape, u16)> {
+    let fill_type = word(data, at + 8)?;
+    let (color1, color2, vertical_gradient, image_at) = match fill_type {
+        1 => (colour(data, at + 10), String::from("#FFFFFF"), false, at + 14),
+        2 => (colour(data, at + 10), colour(data, at + 14), word(data, at + 18)? != 0, at + 20),
+        _ => (String::from("#FFFFFF"), String::from("#FFFFFF"), false, at + 10),
+    };
+
+    Some((Shape {
+        border_size: word(data, at)?,
+        border_color: colour(data, at + 2),
+        shape_type: word(data, at + 6)?,
+        fill_type,
+        color1,
+        color2,
+        vertical_gradient,
+    }, word(data, image_at)?))
 }
 
 /// The counter's reading, the range it is held to, and how it draws itself.
@@ -323,17 +337,27 @@ pub fn read_counter(data: &[u8]) -> Option<Counter> {
     if base == 0 {
         return None;
     }
-    let count = word(data, base + FRAME_COUNT).unwrap_or(0) as usize;
+    let display = long(data, base + DISPLAY).unwrap_or(0);
+    // A bar draws itself with a shape, in the same terms a quick backdrop does, and it sits
+    // where the digit images would be: a counter is one or the other, never both.
+    let bar = display == 2 || display == 3;
+    let shape = if bar { read_shape(data, base + FRAME_COUNT) } else { None };
+    let count = if bar { 0 } else { word(data, base + FRAME_COUNT).unwrap_or(0) as usize };
+
     Some(Counter {
         initial: long(data, base + 2)? as i32,
         minimum: long(data, base + 6)? as i32,
         maximum: long(data, base + 10)? as i32,
-        display: long(data, base + DISPLAY).unwrap_or(0),
+        display,
         width: word(data, base + WIDTH).unwrap_or(0),
         height: word(data, base + HEIGHT).unwrap_or(0),
         frames: (0..count)
             .filter_map(|i| word(data, base + FRAME_COUNT + 2 + i * 2))
             .collect(),
+        shape: shape.as_ref().map(|(s, _)| s.clone()),
+        image: shape.as_ref().map_or(0, |(_, image)| *image),
+        // The eighth bit of the counter's own flags turns a bar around.
+        inverse: word(data, base + COUNTER_FLAGS).unwrap_or(0) & 0x100 != 0,
     })
 }
 
@@ -341,6 +365,7 @@ pub fn read_counter(data: &[u8]) -> Option<Counter> {
 const WIDTH: usize = 18;
 const HEIGHT: usize = 20;
 const DISPLAY: usize = 24;
+const COUNTER_FLAGS: usize = 26;
 const FRAME_COUNT: usize = 28;
 
 /// One movement per object here, so the section's own kind is the movement's.

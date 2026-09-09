@@ -240,6 +240,20 @@ impl Game<'_> {
                 ("height", Json::int(counter.as_ref().map_or(0, |c| c.height) as i64)),
                 ("frames", Json::Array(counter.as_ref().map_or(Vec::new(), |c|
                     c.frames.iter().map(|f| Json::int(*f as i64)).collect()))),
+                ("inverse", Json::Bool(counter.as_ref().is_some_and(|c| c.inverse))),
+                ("image", Json::int(counter.as_ref().map_or(0, |c| c.image) as i64)),
+                ("shape", match counter.as_ref().and_then(|c| c.shape.as_ref()) {
+                    None => Json::Null,
+                    Some(s) => Json::object(vec![
+                        ("shape", Json::int(s.shape_type as i64)),
+                        ("fillType", Json::int(s.fill_type as i64)),
+                        ("color1", Json::text(&s.color1)),
+                        ("color2", Json::text(&s.color2)),
+                        ("verticalGradient", Json::Bool(s.vertical_gradient)),
+                        ("borderSize", Json::int(s.border_size as i64)),
+                        ("borderColor", Json::text(&s.border_color)),
+                    ]),
+                }),
             ])),
             ("alterableStrings", Json::Array(vec![])),
             ("identifier", Json::text(&common.identifier)),

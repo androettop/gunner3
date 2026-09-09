@@ -43,6 +43,32 @@ export interface ParagraphData {
 
 export type FlagMap = Record<string, boolean>;
 
+/** How a shape is drawn: its fill, and the border around it. */
+export interface ShapeData {
+  shape: number;
+  fillType: number;
+  color1: string;
+  color2: string;
+  verticalGradient?: boolean;
+  borderSize?: number;
+  borderColor?: string;
+}
+
+export interface CounterData {
+  initial: number;
+  minimum: number;
+  maximum: number;
+  display?: number;
+  width?: number;
+  height?: number;
+  frames?: number[];
+  /** A bar's shape, in the same terms a quick backdrop's is, and the image a motif fills with. */
+  shape?: ShapeData | null;
+  image?: number;
+  /** A bar that fills from the end it would otherwise empty towards. */
+  inverse?: boolean;
+}
+
 export interface CommonDetail {
   /** Display and behaviour switches from the object's common chunk. */
   flags: FlagMap;
@@ -58,15 +84,7 @@ export interface CommonDetail {
    * values. `display` is 0 hidden, 1 digits, 2 vertical bar, 3 horizontal bar, 4 animation,
    * 5 text; `frames` names one image per glyph, in the order 0-9 then `-`, `+`, `.`, `e`.
    */
-  counter: {
-    initial: number;
-    minimum: number;
-    maximum: number;
-    display?: number;
-    width?: number;
-    height?: number;
-    frames?: number[];
-  };
+  counter: CounterData;
   alterableStrings: string[];
   identifier: string;
   backColor: string;

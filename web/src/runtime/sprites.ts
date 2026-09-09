@@ -1,8 +1,9 @@
 import {
-  type Graphic, GraphicsGroup, ImageSource, ImageSourceAttributeConstants, ImageWrapping, Sprite,
-  Vector,
+  type Graphic, GraphicsGroup, type GraphicsGrouping, ImageSource, ImageSourceAttributeConstants,
+  ImageWrapping, Sprite, Vector,
 } from 'excalibur';
 import type { GameData } from '../data/loader';
+import type { CounterData } from '../data/types';
 import { paint } from './bitmaps';
 
 /** The glyphs a counter's images stand for, in the order the counter stores them. */
@@ -69,7 +70,8 @@ export class SpriteStore {
     if (!fill && detail.fillType === 3) return null;
 
     const graphic = border > 0 && fill
-      ? this.bordered(fill, detail.borderColor ?? '#000000', width, height, border)
+      ? this.bordered([{ graphic: fill, offset: Vector.Zero }],
+        detail.borderColor ?? '#000000', width, height, border)
       : fill;
 
     this.quickBackdrops.set(objectId, graphic);
@@ -77,7 +79,7 @@ export class SpriteStore {
   }
 
   /** The tile itself, drawn over a box as many times its size as it takes to fill it. */
-  private tiled(image: number, width: number, height: number): Graphic | null {
+  private tiled(image: number, width: number, height: number): Sprite | null {
     const source = this.sources.get(image);
     if (!source?.isLoaded()) return null;
 
@@ -101,8 +103,11 @@ export class SpriteStore {
     detail: { fillType: number; color1: string; color2: string; verticalGradient?: boolean },
     width: number,
     height: number,
-  ): Graphic | null {
-    const flat = detail.color1 === detail.color2;
+  ): Sprite | null {
+    // Fill 2 is the only one that ramps: the rest are the one colour, and a shape that carries
+    // just the one leaves the second at white, which drawn as a ramp fades the bar out to
+    // nothing.
+    const flat = detail.fillType !== 2 || detail.color1 === detail.color2;
     // The shape says which way its ramp runs; a flat colour runs neither way.
     const down = detail.verticalGradient !== false;
     const source = paint(
@@ -126,15 +131,73 @@ export class SpriteStore {
     return source ? new Sprite({ image: source, destSize: { width, height } }) : null;
   }
 
-  /** The fill with a border of the given thickness drawn inside its box. */
+  private readonly barFills = new Map<number, Sprite | null>();
+
+  /**
+   * A counter drawn as a bar rather than as a number.
+   *
+   * The bar is the counter's own shape, filled as far as the reading has got: across for a
+   * horizontal one, upwards for a vertical one, and from the other end for one marked inverse.
+   * The border, where there is one, is drawn around the whole box however little of it is full.
+   *
+   * The fill is cut down rather than painted again, so a bar that moves every frame costs
+   * nothing to move: what changes is which part of a picture already on the card is drawn.
+   */
+  counterBar(objectId: number, counter: CounterData, part: number): Graphic | null {
+    const shape = counter.shape;
+    if (!shape) return null;
+    const width = Math.max(1, Math.round(counter.width ?? 0));
+    const height = Math.max(1, Math.round(counter.height ?? 0));
+
+    let fill = this.barFills.get(objectId);
+    if (fill === undefined) {
+      fill = shape.fillType === 3
+        ? this.tiled(counter.image ?? 0, width, height)
+        : this.ramp(shape, width, height);
+      // A tile still being decoded is asked for again next frame rather than remembered as a
+      // bar with no fill.
+      if (!fill && shape.fillType === 3) return null;
+      this.barFills.set(objectId, fill);
+    }
+    if (!fill) return null;
+
+    const shown = Math.max(0, Math.min(1, part));
+    const across = counter.display === 3;
+    const view = fill.sourceView;
+    const cut = fill.clone();
+    if (across) {
+      const seen = view.width * shown;
+      cut.sourceView = { ...view, x: view.x + (counter.inverse ? view.width - seen : 0), width: seen };
+      cut.width = width * shown;
+      cut.height = height;
+    } else {
+      const seen = view.height * shown;
+      cut.sourceView = { ...view, y: view.y + (counter.inverse ? 0 : view.height - seen), height: seen };
+      cut.width = width;
+      cut.height = height * shown;
+    }
+
+    // The filled part sits at the end the bar fills from; the rest of the box stays empty.
+    const at = across
+      ? new Vector(counter.inverse ? width - width * shown : 0, 0)
+      : new Vector(0, counter.inverse ? 0 : height - height * shown);
+
+    const inside: GraphicsGrouping[] = shown > 0 ? [{ graphic: cut, offset: at }] : [];
+    const border = Math.min(Math.round(shape.borderSize ?? 0), Math.floor(Math.min(width, height) / 2));
+    return border > 0
+      ? this.bordered(inside, shape.borderColor ?? '#000000', width, height, border)
+      : group(inside, width, height);
+  }
+
+  /** The given contents with a border of that thickness drawn inside the box. */
   private bordered(
-    fill: Graphic, color: string, width: number, height: number, thickness: number,
+    inside: GraphicsGrouping[], color: string, width: number, height: number, thickness: number,
   ): Graphic {
     const source = paint(1, 1, `quick backdrop border ${color}`, (context) => {
       context.fillStyle = color;
       context.fillRect(0, 0, 1, 1);
     });
-    if (!source) return fill;
+    if (!source) return group(inside, width, height);
 
     const strip = (w: number, h: number, x: number, y: number) => ({
       graphic: new Sprite({ image: source, destSize: { width: w, height: h } }),
@@ -143,7 +206,7 @@ export class SpriteStore {
     return new GraphicsGroup({
       useAnchor: false,
       members: [
-        { graphic: fill, offset: Vector.Zero },
+        ...inside,
         strip(width, thickness, 0, 0),
         strip(width, thickness, 0, height - thickness),
         strip(thickness, height - thickness * 2, 0, thickness),
@@ -261,4 +324,14 @@ export class SpriteStore {
     if (topLeftAnchored) return { x: meta.width / 2, y: meta.height / 2 };
     return { x: meta.width / 2 - meta.hotspotX, y: meta.height / 2 - meta.hotspotY };
   }
+}
+
+/**
+ * Graphics laid out inside a box, placed from its top left rather than around its middle.
+ *
+ * A group with nothing in it still has to stand for the box, or an empty bar would be a graphic
+ * of no size and the frame would have nowhere to put it.
+ */
+function group(members: GraphicsGrouping[], width: number, height: number): Graphic {
+  return new GraphicsGroup({ useAnchor: false, members, width, height });
 }

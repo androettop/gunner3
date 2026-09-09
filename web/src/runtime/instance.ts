@@ -2,7 +2,10 @@ import {
   Actor, Color, Font, FontStyle, FontUnit, ImageFiltering, Text, Vector,
 } from 'excalibur';
 import type { GameData } from '../data/loader';
-import { isBackdrop, isCommon, isQuickBackdrop, type DirectionData, type ObjectDef } from '../data/types';
+import {
+  isBackdrop, isCommon, isQuickBackdrop,
+  type CounterData, type DirectionData, type ObjectDef,
+} from '../data/types';
 import { fontFamily, fontOr } from './fonts';
 import type { SpriteStore } from './sprites';
 import { initialState, type MovementState } from './movement';
@@ -90,13 +93,16 @@ export class FusionInstance {
   /** Glyph images for a counter that draws its reading as digits, null for anything else. */
   private readonly counterDigits: number[] | null;
 
+  /** The counter itself, for one that draws its reading as a bar. */
+  private readonly counterBar: CounterData | null;
+
   /** Writes the counter reading, honouring its configured range. */
   setCounter(value: number): void {
     const before = this.values[0];
     const range = this.counterRange;
     this.values[0] = range ? Math.min(Math.max(value, range.minimum), range.maximum) : value;
     // A counter that draws its reading has to be redrawn when the reading moves.
-    if (this.values[0] !== before && this.counterDigits) this.syncGraphic();
+    if (this.values[0] !== before && (this.counterDigits || this.counterBar)) this.syncGraphic();
   }
 
   values: number[];
@@ -127,10 +133,12 @@ export class FusionInstance {
     // Counters keep their reading in slot 0 and are clamped to their configured range; the
     // game leans on that for terminal velocity and for the health meter's ceiling.
     this.counterRange = common?.counter ?? null;
-    // Display type 1 is "digits"; anything else a counter does needs no glyphs.
+    // Display type 1 is "digits"; 2 and 3 are a bar drawn from the counter's own shape.
     const counter = common?.counter;
     this.counterDigits =
       counter?.display === 1 && counter.frames?.length ? counter.frames : null;
+    this.counterBar =
+      counter && (counter.display === 2 || counter.display === 3) ? counter : null;
     if (this.counterRange) this.values[0] = this.counterRange.initial;
     this.strings = common ? [...common.alterableStrings] : [];
     if (common?.movements.length) this.direction = startingDirection(common.movements[0].startingDirection);
@@ -339,6 +347,7 @@ export class FusionInstance {
 
     // A counter set to show digits draws its reading rather than a sprite of its own.
     if (this.counterDigits) return this.syncDigits(this.counterDigits);
+    if (this.counterBar) return this.syncBar(this.counterBar);
 
     // Quick backdrops are a colour ramp or a tiled image sized to the object's own box, not a
     // plain sprite drawn at its image's natural size.
@@ -393,6 +402,37 @@ export class FusionInstance {
   }
 
   private renderedDigits: string | null = null;
+
+  /**
+   * Draws a counter's reading as a bar.
+   *
+   * Fusion puts a bar where the object sits, drawn down and to the right of it, which is the
+   * corner it is laid out from in the frame. The reading decides how much of the box is full,
+   * and the bar is rebuilt only when that changes.
+   */
+  private syncBar(counter: CounterData): boolean {
+    const span = counter.maximum - counter.minimum;
+    const reading = this.values[0] ?? 0;
+    const part = span > 0 ? (reading - counter.minimum) / span : 0;
+    // A bar is a box a few hundred pixels wide, so a thousandth of it is under a pixel: anything
+    // finer than that is the same picture and not worth building again.
+    const shown = String(Math.round(Math.max(0, Math.min(1, part)) * 1000));
+
+    if (this.renderedBar !== shown) {
+      const graphic = this.sprites.counterBar(this.def.id, counter, part);
+      if (!graphic) return false;
+      this.renderedBar = shown;
+      this.actor.graphics.use(graphic);
+      // Laid out from its top left, like a backdrop, rather than around its middle.
+      this.actor.graphics.offset = Vector.Zero;
+    }
+
+    this.actor.graphics.visible = this.visible;
+    this.hasGraphic = true;
+    return true;
+  }
+
+  private renderedBar: string | null = null;
 
   /** Draws the selected paragraph, laid out from the object's top-left like Fusion does. */
   private syncText(): boolean {
@@ -462,6 +502,16 @@ export class FusionInstance {
 
   /** Bounding box in frame coordinates, from the current image's size and hotspot. */
   bounds(): { left: number; top: number; right: number; bottom: number } {
+    // A bar counter's box is the size it declares, laid out from where the object sits.
+    if (this.counterBar) {
+      return {
+        left: this.x,
+        top: this.y,
+        right: this.x + (this.counterBar.width ?? 0),
+        bottom: this.y + (this.counterBar.height ?? 0),
+      };
+    }
+
     // A quick backdrop's box is its declared size, which is what it is stretched or tiled to.
     if (isQuickBackdrop(this.def.detail)) {
       return {
