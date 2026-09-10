@@ -281,3 +281,12 @@ export function isBackdrop(d: ObjectDef['detail']): d is BackdropDetail {
 export function isQuickBackdrop(d: ObjectDef['detail']): d is QuickBackdropDetail {
   return !!d && 'shape' in d;
 }
+
+/**
+ * The fill that repeats a picture across a shape's box, rather than colouring it.
+ *
+ * Named because two parts of the runtime have to agree on it: the one that draws such a fill,
+ * and the one that decides, before anything is drawn, which pictures must be given to the
+ * graphics card set to repeat.
+ */
+export const TILED_FILL = 3;
