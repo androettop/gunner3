@@ -1,4 +1,4 @@
-import { ImageSource, ImageSourceAttributeConstants } from 'excalibur';
+import { ImageSource, ImageSourceAttributeConstants, ImageWrapping } from 'excalibur';
 
 /**
  * Pictures the runtime makes for itself, and pictures it decodes, as something drawable.
@@ -17,7 +17,7 @@ import { ImageSource, ImageSourceAttributeConstants } from 'excalibur';
  * element reports, and a handful of attributes saying how its texture is to be sampled. Given
  * those, it is drawn and uploaded like any other picture.
  */
-export function sourceOf(bitmap: ImageBitmap, path: string): ImageSource {
+export function sourceOf(bitmap: ImageBitmap, path: string, tiled = false): ImageSource {
   const attributes = new Map<string, string>();
   const element = Object.assign(bitmap, {
     naturalWidth: bitmap.width,
@@ -35,6 +35,13 @@ export function sourceOf(bitmap: ImageBitmap, path: string): ImageSource {
   // Left unsaid, a picture is sampled the way the application asks for. Naming it per image
   // would override that, and whether this game is smoothed is the application's to decide.
   element.removeAttribute(ImageSourceAttributeConstants.Filtering);
+  // A picture the game tiles has to say so before anything draws it. The graphics layer reads
+  // this once, when it first hands the picture to the card, and a texture already up there keeps
+  // the answer it was given however often it is asked again.
+  if (tiled) {
+    element.setAttribute(ImageSourceAttributeConstants.WrappingX, ImageWrapping.Repeat);
+    element.setAttribute(ImageSourceAttributeConstants.WrappingY, ImageWrapping.Repeat);
+  }
   return source;
 }
 

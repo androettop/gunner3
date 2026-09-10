@@ -1,9 +1,8 @@
 import {
-  type Graphic, GraphicsGroup, type GraphicsGrouping, ImageSource, ImageSourceAttributeConstants,
-  ImageWrapping, Sprite, Vector,
+  type Graphic, GraphicsGroup, type GraphicsGrouping, ImageSource, Sprite, Vector,
 } from 'excalibur';
 import type { GameData } from '../data/loader';
-import type { CounterData } from '../data/types';
+import { type CounterData, TILED_FILL } from '../data/types';
 import { paint } from './bitmaps';
 
 /** The glyphs a counter's images stand for, in the order the counter stores them. */
@@ -58,7 +57,7 @@ export class SpriteStore {
 
     const width = Math.max(1, Math.round(detail.width));
     const height = Math.max(1, Math.round(detail.height));
-    const fill = detail.fillType === 3
+    const fill = detail.fillType === TILED_FILL
       ? this.tiled(detail.image, width, height)
       : this.ramp(detail, width, height);
 
@@ -67,7 +66,7 @@ export class SpriteStore {
     const border = Math.min(Math.round(detail.borderSize ?? 0), Math.floor(Math.min(width, height) / 2));
     // A tile that is not decoded yet is not a backdrop that has none: leaving it uncached asks
     // again on the next frame, as everything else waiting on a picture does.
-    if (!fill && detail.fillType === 3) return null;
+    if (!fill && detail.fillType === TILED_FILL) return null;
 
     const graphic = border > 0 && fill
       ? this.bordered([{ graphic: fill, offset: Vector.Zero }],
@@ -83,14 +82,11 @@ export class SpriteStore {
     const source = this.sources.get(image);
     if (!source?.isLoaded()) return null;
 
-    // A texture is clamped at its edge unless it is asked to repeat, which is what turns a box
-    // wider than the tile into more than one of it. The tile may be on the card already from
-    // being drawn as an ordinary sprite, so the upload is asked for again with it.
-    const element = source.image as unknown as HTMLImageElement;
-    element.setAttribute(ImageSourceAttributeConstants.WrappingX, ImageWrapping.Repeat);
-    element.setAttribute(ImageSourceAttributeConstants.WrappingY, ImageWrapping.Repeat);
-    element.setAttribute('forceUpload', 'true');
-
+    // A box wider than the tile is more than one of it because the texture repeats, which the
+    // picture was marked for when it was decoded. It cannot be asked for here: the tile is very
+    // often an ordinary backdrop block as well, and by the time a level wants the fill the card
+    // is holding a texture that was uploaded to draw one of those, which no amount of asking
+    // will re-sample. Left to that, the fill is the tile's edge pixel drawn the width of a level.
     return new Sprite({
       image: source,
       sourceView: { x: 0, y: 0, width, height },
@@ -151,12 +147,12 @@ export class SpriteStore {
 
     let fill = this.barFills.get(objectId);
     if (fill === undefined) {
-      fill = shape.fillType === 3
+      fill = shape.fillType === TILED_FILL
         ? this.tiled(counter.image ?? 0, width, height)
         : this.ramp(shape, width, height);
       // A tile still being decoded is asked for again next frame rather than remembered as a
       // bar with no fill.
-      if (!fill && shape.fillType === 3) return null;
+      if (!fill && shape.fillType === TILED_FILL) return null;
       this.barFills.set(objectId, fill);
     }
     if (!fill) return null;

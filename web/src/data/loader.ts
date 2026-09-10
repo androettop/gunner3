@@ -1,6 +1,7 @@
 import type {
   FontDef, FrameDef, FrameEvents, GameManifest, ImageMeta, ObjectDef, SoundDef, MusicDef,
 } from './types';
+import { isCommon, isQuickBackdrop, TILED_FILL } from './types';
 import type { GamePackage } from './package';
 
 /** Where the packaging step puts the soundfont. */
@@ -32,6 +33,36 @@ export class GameData {
   get frames(): FrameDef[] {
     return this.manifest.frames;
   }
+
+  /**
+   * The pictures this game repeats across a box rather than draws once.
+   *
+   * Whether a texture repeats or is clamped at its edge is settled when the picture is handed to
+   * the graphics card, and asking again later is ignored for as long as the card still holds it.
+   * That would not matter if a tile were only ever a tile, but a game usually draws the same
+   * picture both ways: Gunner 3's dark earth fills a whole level and is a backdrop block of its
+   * own, and the blocks are met first. Uploaded from a block, the tile arrives clamped, and the
+   * fill over it is then its edge pixel stretched the width of the level.
+   *
+   * So the answer is read from the game rather than from whatever drew first. Both kinds of fill
+   * are counted: an object's own, and the motif a counter fills its bar with.
+   */
+  get tiledImages(): Set<number> {
+    if (!this.tiled) {
+      this.tiled = new Set<number>();
+      for (const object of this.objects.values()) {
+        const detail = object.detail;
+        if (isQuickBackdrop(detail) && detail.fillType === TILED_FILL) {
+          this.tiled.add(detail.image);
+        } else if (isCommon(detail) && detail.counter?.shape?.fillType === TILED_FILL) {
+          this.tiled.add(detail.counter.image ?? 0);
+        }
+      }
+    }
+    return this.tiled;
+  }
+
+  private tiled: Set<number> | null = null;
 
   frame(index: number): FrameDef {
     const frame = this.manifest.frames[index];

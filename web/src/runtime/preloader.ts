@@ -44,12 +44,19 @@ export class Preloader {
     const report = (label: string) => onProgress({ loaded, total, label });
     report('Loading sprites');
 
+    // Which pictures repeat rather than being drawn once is settled here, before a frame is
+    // built: the graphics layer reads it the first time a picture reaches the card and keeps
+    // that answer, so a tile also drawn as an ordinary sprite must not be left to whichever of
+    // the two happened first.
+    const tiled = this.data.tiledImages;
+
     let next = 0;
     const worker = async (): Promise<void> => {
       while (next < handles.length) {
         const handle = handles[next++];
         try {
-          images.set(handle, sourceOf(await this.decode(handle), `images/${handle}.png`));
+          images.set(handle,
+            sourceOf(await this.decode(handle), `images/${handle}.png`, tiled.has(handle)));
         } catch (e) {
           console.warn(`image ${handle}: ${e}`);
         }
