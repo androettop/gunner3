@@ -65,6 +65,54 @@ export class IniStore {
     return this.load(at.file)[at.group]?.[at.item] ?? '';
   }
 
+  /**
+   * Every save file there is, as one object: the files, their groups and their items.
+   *
+   * Read from storage rather than from the cache, since that is where the files actually are,
+   * and a file nothing has touched this session is not in the cache at all.
+   */
+  dump(): Record<string, IniFile> {
+    const files: Record<string, IniFile> = {};
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key?.startsWith(PREFIX)) continue;
+        files[key.slice(PREFIX.length)] = this.load(key.slice(PREFIX.length));
+      }
+    } catch (e) {
+      console.warn(`ini: could not list the files: ${e}`);
+    }
+    return files;
+  }
+
+  /**
+   * Writes one item outright, naming the file rather than going through an object's cursor.
+   *
+   * The game writes through whichever INI object holds the place in the file it wants; there is
+   * nothing to hold a place for when the write comes from outside the game.
+   */
+  poke(file: string, group: string, item: string, value: string | number): void {
+    const path = normalisePath(file);
+    const contents = this.load(path);
+    (contents[group] ??= {})[item] = String(value);
+    this.save(path, contents);
+  }
+
+  /** Throws every save file away, which is what a fresh install looks like to the game. */
+  forget(): void {
+    try {
+      const keys: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key?.startsWith(PREFIX)) keys.push(key);
+      }
+      for (const key of keys) localStorage.removeItem(key);
+    } catch (e) {
+      console.warn(`ini: could not clear the files: ${e}`);
+    }
+    this.files.clear();
+  }
+
   private cursor(object: number): Cursor {
     let at = this.cursors.get(object);
     if (!at) {

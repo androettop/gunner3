@@ -222,44 +222,97 @@ export class FrameScene extends Scene {
     this.camera.zoom = 1;
   }
 
+  /**
+   * Holds the game's logic where it stands, with the picture still being drawn.
+   *
+   * Nothing in the game pauses itself; this is here for whoever is looking at it from outside.
+   * Stopping the clock instead would hold the drawing too, and a game that is not being drawn
+   * cannot be looked at, moved around or asked what it is showing.
+   */
+  paused = false;
+
+  /** Ticks promised to a paused game, handed to it one loop at a time. */
+  private stepsOwed = 0;
+
+  /** Runs a fixed number of logic ticks and holds again, whatever the game was doing before. */
+  step(ticks = 1): void {
+    this.paused = true;
+    this.stepsOwed += Math.max(0, Math.trunc(ticks));
+  }
+
+  /**
+   * Called at the end of every logic tick, once the events have run and the dead are cleared.
+   *
+   * Nothing in the runtime uses this. It is where something watching the game from outside puts
+   * itself, so that it sees every tick exactly once: sampling from a render frame sees some
+   * ticks twice and misses others, which is no way to watch a value change.
+   */
+  readonly observers = new Set<(scene: FrameScene) => void>();
+
+  /** Feeds a key press to the next tick, as though it had been typed. */
+  pressKey(...keys: Keys[]): void {
+    for (const key of keys) this.pressedKeys.add(key);
+  }
+
+  /** Feeds a click to the next tick, as though the frame had been clicked on. */
+  pressPointer(): void {
+    this.pointerPressed = true;
+  }
+
   onPreUpdate(_engine: Engine, elapsed: number): void {
     // Fusion runs its whole loop a fixed number of times per second, and the game's physics is
     // written as per-tick position deltas: the jump adds value("Jump") to Y every tick. Driving
     // that from the render delta makes the player leap much higher on a fast display, so logic
     // is stepped at the application's own frame rate instead.
     const step = 1 / (this.data.manifest.frameRate || 60);
-    this.tickAccumulator = Math.min(this.tickAccumulator + elapsed / 1000, step * MAX_CATCHUP_TICKS);
 
-    while (this.tickAccumulator >= step) {
-      this.tickAccumulator -= step;
-      this.frameTime += step;
-      this.ticks++;
-
-      for (const instance of this.instances) {
-        if (instance.destroyed) continue;
-        if (!instance.hasGraphic) instance.syncGraphic();
-        instance.tickAnimation(1);
-        // An object playing out its disappearing animation stops where it died: the spark stays
-        // on the wall the shot hit rather than carrying on at the shot's speed.
-        if (!instance.destroying) updateMovement(instance, this, 1);
+    if (this.paused) {
+      // Time spent paused is not owed back: let it pile up and the game answers a pause with a
+      // burst of catching up, which is the opposite of what holding it still was for.
+      this.tickAccumulator = 0;
+      const owed = this.stepsOwed;
+      this.stepsOwed = 0;
+      for (let i = 0; i < owed; i++) this.tickOnce(step);
+    } else {
+      this.tickAccumulator =
+        Math.min(this.tickAccumulator + elapsed / 1000, step * MAX_CATCHUP_TICKS);
+      while (this.tickAccumulator >= step) {
+        this.tickAccumulator -= step;
+        this.tickOnce(step);
       }
-
-      if (this.questionOpen) this.updateQuestionHover();
-      else this.interpreter?.run(step);
-      // Presses are consumed by the tick that saw them, so one press is one trigger.
-      this.pressedKeys.clear();
-      this.pointerPressed = false;
-      // An animation reports as over, and a movement reports being stopped by the scenery, for
-      // the one tick's worth of events that follows.
-      for (const instance of this.instances) {
-        instance.finishedAnimation = null;
-        instance.hitBackground = false;
-      }
-      this.clearWhatHasLeft();
-      this.reapDestroyed();
     }
 
     for (const instance of this.instances) instance.syncPosition();
+  }
+
+  /** One turn of Fusion's loop: what moves, then what the events make of it, then the tidying. */
+  private tickOnce(step: number): void {
+    this.frameTime += step;
+    this.ticks++;
+
+    for (const instance of this.instances) {
+      if (instance.destroyed) continue;
+      if (!instance.hasGraphic) instance.syncGraphic();
+      instance.tickAnimation(1);
+      // An object playing out its disappearing animation stops where it died: the spark stays
+      // on the wall the shot hit rather than carrying on at the shot's speed.
+      if (!instance.destroying) updateMovement(instance, this, 1);
+    }
+
+    if (this.questionOpen) this.updateQuestionHover();
+    else this.interpreter?.run(step);
+    // Presses are consumed by the tick that saw them, so one press is one trigger.
+    this.pressedKeys.clear();
+    this.pointerPressed = false;
+    // An animation reports as over, and a movement reports being stopped by the scenery, for
+    // the one tick's worth of events that follows.
+    for (const instance of this.instances) {
+      instance.finishedAnimation = null;
+      instance.hitBackground = false;
+    }
+    this.clearWhatHasLeft();
+    this.reapDestroyed();
+    for (const observer of this.observers) observer(this);
   }
 
   /**
@@ -384,6 +437,21 @@ export class FrameScene extends Scene {
   /** Opcodes the interpreter met but does not implement, with hit counts. */
   get interpreterUnsupported(): [string, number][] {
     return [...(this.interpreter?.unsupported ?? new Map())].sort((a, b) => b[1] - a[1]);
+  }
+
+  /** The event groups, and whether each is switched on. A group that is off is skipped whole. */
+  get eventGroups(): { id: number; active: boolean; events: number[] }[] {
+    return this.interpreter?.groups() ?? [];
+  }
+
+  /** Switches an event group on or off, as the game's own actions do. */
+  setGroupActive(id: number, active: boolean): void {
+    this.interpreter?.setGroupActive(id, active);
+  }
+
+  /** The frame's event table, as it was dumped. `events` is Excalibur's own. */
+  get eventTable(): FrameEvents {
+    return this.eventData;
   }
 
   /** Seconds since the frame started; Fusion timer conditions are expressed against this. */
