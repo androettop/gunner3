@@ -9,8 +9,9 @@
  * The default at the bottom is this game's. A different game is a different list.
  */
 
-/** A key as `KeyboardEvent.code` names it, which is what Excalibur reads. */
-export type KeyCode = string;
+import type { KeyCode } from '../keys';
+
+export type { KeyCode };
 
 /**
  * The picture on a button.

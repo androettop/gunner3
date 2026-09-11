@@ -43,6 +43,8 @@ import { DEFAULT_CHROME, DEFAULT_LAYOUTS, type TouchLayout } from './runtime/tou
 import {
   ControlOverlay, type Reading, type Shell, silhouetteFrom,
 } from './runtime/touch/overlay';
+import { DEFAULT_PAD_LAYOUTS } from './runtime/pad/layout';
+import { PadControl } from './runtime/pad/pad';
 
 export interface PlayOptions {
   /** The package to play: a URL to fetch it from, or the bytes of one already in hand. */
@@ -152,6 +154,7 @@ export async function play(options: PlayOptions): Promise<Game> {
   let current: FrameScene | null = null;
   let debug: Debug | null = null;
   let overlay: ControlOverlay | null = null;
+  let pad: PadControl | null = null;
   let sceneCount = 0;
   let switching = false;
 
@@ -178,8 +181,10 @@ export async function play(options: PlayOptions): Promise<Game> {
       const key = `frame-${index}-${sceneCount++}`;
       engine.addScene(key, scene);
       await engine.goToScene(key);
-      // The controls belong to the frame: a level is played with a thumb, a menu is not.
+      // The controls belong to the frame: a level is played with a thumb, a menu is not, and a
+      // pad plays the one and points at the other.
       overlay?.show(index);
+      pad?.show(index);
     } finally {
       switching = false;
     }
@@ -218,6 +223,10 @@ export async function play(options: PlayOptions): Promise<Game> {
     reading,
     (on) => { settings.touch = on; keep(); },
   );
+
+  // A pad is polled rather than plugged in: there is nothing to wait for and nothing to turn
+  // on, and until one is actually held this costs a look at an empty list once a frame.
+  pad = new PadControl(engine.canvas, DEFAULT_PAD_LAYOUTS);
 
   // The rest of what was chosen last time, put back now that there is something to put it on.
   shell.setSmoothing(settings.smoothing);
@@ -304,6 +313,7 @@ export async function play(options: PlayOptions): Promise<Game> {
       document.removeEventListener('visibilitychange', visibilityChanged);
       audio.stopMusic();
       overlay?.destroy();
+      pad?.stop();
       engine.stop();
     },
   };

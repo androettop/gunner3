@@ -2,6 +2,7 @@ import type { ImageSource } from 'excalibur';
 import type {
   KeyCode, TouchButton, TouchCorner, TouchIcon, TouchLayout, TouchSteering,
 } from './layout';
+import { sendKey } from '../keys';
 
 /** The corners a button can be pinned to, in the order their stacks are built. */
 const CORNERS: TouchCorner[] = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
@@ -478,33 +479,25 @@ export class ControlOverlay {
   private press(key: KeyCode): void {
     const count = this.down.get(key) ?? 0;
     this.down.set(key, count + 1);
-    if (count === 0) send('keydown', key);
+    if (count === 0) sendKey('keydown', key);
   }
 
   private release(key: KeyCode): void {
     const count = this.down.get(key) ?? 0;
     if (count <= 1) {
       this.down.delete(key);
-      send('keyup', key);
+      sendKey('keyup', key);
     } else {
       this.down.set(key, count - 1);
     }
   }
 
   private releaseAll(): void {
-    for (const key of [...this.down.keys()]) send('keyup', key);
+    for (const key of [...this.down.keys()]) sendKey('keyup', key);
     this.down.clear();
     this.held.clear();
     this.steering = null;
   }
-}
-
-/**
- * Excalibur listens for keys on the window and reads `code`, so that is what is sent. The events
- * are the real thing, which means anything else the page has bound sees them too.
- */
-function send(type: 'keydown' | 'keyup', code: KeyCode): void {
-  window.dispatchEvent(new KeyboardEvent(type, { code, key: code, bubbles: true }));
 }
 
 function style(): HTMLStyleElement {
