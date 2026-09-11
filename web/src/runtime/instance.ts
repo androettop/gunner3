@@ -63,6 +63,19 @@ export class FusionInstance {
   hitBackground = false;
 
   /**
+   * Set for the tick on which the object was destroyed.
+   *
+   * Fusion does not take an object away where it is destroyed: it goes when the loop ends, and
+   * every event below the one that killed it still finds it. The bosses are built on exactly
+   * that. A boss's weak point is a separate object laid over its body, the event that destroys
+   * a shot against the body sits above the one that asks whether the shot reached the weak
+   * point, and taking the shot away on the spot leaves the second event nothing to find. The
+   * boss can then only be hurt through whatever sliver of the weak point hangs outside its
+   * body, which on level 2 is four pixels along the top of its head.
+   */
+  destroyedThisTick = false;
+
+  /**
    * The animation that finished on this tick, if any. Fusion reports an animation as over at the
    * moment it ends, before the object falls back to its resting animation, so the signal cannot
    * be recovered afterwards from which animation is playing.
@@ -72,8 +85,9 @@ export class FusionInstance {
   visible = true;
   destroyed = false;
   /**
-   * Set while the object is playing out its disappearing animation. It is on its way out (it no
-   * longer takes part in collisions), but it is still on screen and events can still see it.
+   * Set while the object is playing out its disappearing animation. It is on its way out (once
+   * the loop that killed it is over it takes no further part in collisions), but it is still on
+   * screen and events can still see it.
    */
   destroying = false;
   /** Index of the event that destroyed this instance, for tracing. */
@@ -546,6 +560,7 @@ export class FusionInstance {
   beginDestroy(): boolean {
     if (this.destroyed) return true;
     if (this.destroying) return false;
+    this.destroyedThisTick = true;
     if (!this.hasAnimation(DISAPPEARING_ANIMATION)) {
       this.destroyed = true;
       return true;
@@ -555,9 +570,18 @@ export class FusionInstance {
     return false;
   }
 
+  /**
+   * Whether the instance still takes part in collisions.
+   *
+   * Something on its way out no longer collides, so a dying shot cannot wound twice — but not
+   * before the loop that killed it has run out, since until then Fusion has not taken it away.
+   */
+  collides(): boolean {
+    return this.destroyedThisTick || (!this.destroyed && !this.destroying);
+  }
+
   overlaps(other: FusionInstance): boolean {
-    // Something on its way out no longer collides, so a dying shot cannot wound twice.
-    if (this.destroyed || other.destroyed || this.destroying || other.destroying) return false;
+    if (!this.collides() || !other.collides()) return false;
     const a = this.bounds();
     const b = other.bounds();
     return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;

@@ -305,10 +305,12 @@ export class FrameScene extends Scene {
     this.pressedKeys.clear();
     this.pointerPressed = false;
     // An animation reports as over, and a movement reports being stopped by the scenery, for
-    // the one tick's worth of events that follows.
+    // the one tick's worth of events that follows. Something destroyed goes the same way: it
+    // stays collidable for the rest of the loop that killed it, and stops here.
     for (const instance of this.instances) {
       instance.finishedAnimation = null;
       instance.hitBackground = false;
+      instance.destroyedThisTick = false;
     }
     this.clearWhatHasLeft();
     this.reapDestroyed();
@@ -467,7 +469,9 @@ export class FrameScene extends Scene {
    * player and then creates the corpse "at the Gunner" on the next line, so removing it on the
    * spot leaves the create with nowhere to put anything and the player simply vanishes.
    *
-   * Collisions are the exception and check for themselves, so nothing collides with a corpse.
+   * Collisions hold to the same line: an instance goes on colliding for the rest of the loop
+   * that killed it, and stops once that loop is over, so nothing collides with a corpse but a
+   * shot may still be found by the events below the one that spent it.
    */
   instancesOf(objectId: number): FusionInstance[] {
     return this.byObject.get(objectId) ?? [];

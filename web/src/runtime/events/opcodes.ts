@@ -217,7 +217,7 @@ export const CONDITIONS: Record<string, ConditionFn> = {
     // An object meets the background either by overlapping it or by having its movement stopped
     // by it: a movement halts flush against the scenery, so the overlap alone never happens.
     const touching = targets(ctx, ace)
-      .filter((i) => touchesObstacle(ctx, i) || (i.hitBackground && !i.destroying && !i.destroyed));
+      .filter((i) => touchesObstacle(ctx, i) || (i.hitBackground && i.collides()));
     const fresh = ctx.interpreter.freshPairs(ctx.conditionKey, new Set(touching.map((i) => String(i.id))));
     const started = touching.filter((i) => fresh.has(String(i.id)));
     if (!started.length) return false;
@@ -549,7 +549,7 @@ function under(ctx: Ctx, i: FusionInstance): boolean {
 /** True where any of the instance's box overlaps a solid background pixel. */
 export function touchesObstacle(ctx: Ctx, i: FusionInstance): boolean {
   // As with object collisions, something already on its way out no longer registers one.
-  if (i.destroying || i.destroyed) return false;
+  if (!i.collides()) return false;
   const b = i.bounds();
   return ctx.scene.obstacles.testRect(b.left, b.top, b.right, b.bottom);
 }
