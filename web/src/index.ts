@@ -20,11 +20,18 @@
  * That is the whole of the public surface: everything else (the interpreter, the movement
  * engines, the obstacle masks) is driven by the game's own data and has nothing a page would
  * want to say to it.
+ *
+ * What it does have is `game.debug`, which is the same runtime opened up for a console: the
+ * frames, the objects, the instances in the frame and the values they hold, all readable and
+ * writable, plus the clock, so the game can be held still and handed one tick at a time. The
+ * running game is left on the window under its own name, so `fusion.debug.help()` is the whole
+ * of what anyone needs to remember. See ./runtime/debug.
  */
 import { Color, DisplayMode, Engine } from 'excalibur';
 import { GameData } from './data/loader';
 import { GamePackage } from './data/package';
 import { AudioBank } from './runtime/audio/player';
+import { Debug, pauseOnBlurWanted } from './runtime/debug';
 import { GlobalValues } from './runtime/globals';
 import { ArrayStore } from './runtime/arrays';
 import { IniStore } from './runtime/ini';
@@ -55,6 +62,15 @@ export interface PlayOptions {
    * rather than to the game, and are as useful with a mouse as with a thumb.
    */
   touch?: boolean | TouchLayout[];
+  /**
+   * Where to leave the running game on the window, for a console to reach: `fusion` by default,
+   * another name if that one is taken, `false` to leave the window alone.
+   *
+   * A library writing to the window is not something to do quietly, but a game is played by
+   * looking at it, and what there is to reach for while looking at it has to be somewhere a
+   * console can name without the page having arranged it first.
+   */
+  debug?: boolean | string;
 }
 
 /** A running game. */
@@ -64,6 +80,8 @@ export interface Game {
   readonly audio: AudioBank;
   /** The frame being played, or null between one and the next. */
   readonly scene: FrameScene | null;
+  /** The runtime's state, opened up for a console: see ./runtime/debug. */
+  readonly debug: Debug;
   /** Jumps to a frame, as the game's own events do. */
   show(index: number): Promise<void>;
   /** Stops the game and releases the canvas. */
@@ -138,6 +156,7 @@ export async function play(options: PlayOptions): Promise<Game> {
   // like the save state they belong to the game rather than to any one frame.
   const arrays = new ArrayStore();
   let current: FrameScene | null = null;
+  let debug: Debug | null = null;
   let overlay: ControlOverlay | null = null;
   let sceneCount = 0;
   let switching = false;
@@ -158,6 +177,9 @@ export async function play(options: PlayOptions): Promise<Game> {
       scene.arrays = arrays;
       // A frame jump cannot tear down the scene it is running inside, so defer it a tick.
       scene.onJumpToFrame = (next) => queueMicrotask(() => void show(next));
+      // Whatever a console asked of the last frame (that the game be held, that firings be
+      // counted) is asked of this one before it opens, so the answer covers its first tick.
+      debug?.adopt(scene);
 
       current = scene;
       const key = `frame-${index}-${sceneCount++}`;
@@ -214,6 +236,28 @@ export async function play(options: PlayOptions): Promise<Game> {
   document.addEventListener('pointerdown', resume, { once: true });
   document.addEventListener('keydown', resume, { once: true });
 
+  // The runtime, opened up for a console. It is built before the first frame opens so that what
+  // it is asked to do covers that frame too, and it holds nothing of its own: what it hands out
+  // are the runtime's own objects.
+  const bridge = new Debug({
+    engine,
+    data,
+    audio,
+    ini,
+    globals,
+    scene: () => current,
+    show,
+    pauseOnBlur: (on?: boolean) => {
+      if (on !== undefined) {
+        pauseOnBlur = on;
+        visibilityChanged();
+      }
+      return pauseOnBlur;
+    },
+    awaken: () => visibilityChanged(),
+  });
+  debug = bridge;
+
   await show(0);
 
   /**
@@ -223,16 +267,25 @@ export async function play(options: PlayOptions): Promise<Game> {
    * and the game exactly as it stood. Both the window's focus and the tab's own are watched,
    * since a tab can be hidden without the window losing focus and a window can lose focus with
    * the tab still showing.
+   *
+   * Unless it is told not to. Working on a game through the browser's own tools means leaving
+   * its window at every step, and a game that stops each time cannot be watched while it is
+   * being worked on; `fusion.debug.pauseOnBlur(false)` says so, and storage remembers it across
+   * the reloads that such work is made of.
    */
+  let pauseOnBlur = pauseOnBlurWanted();
   const watch = (awake: boolean) => {
-    if (awake === engine.clock.isRunning()) return;
-    if (awake) {
-      engine.clock.start();
-      audio.wake();
-    } else {
-      engine.clock.stop();
-      audio.sleep();
-    }
+    // The sound follows the window whether or not the clock does: a game left running in the
+    // background is one thing, a game heard from another window is another.
+    if (awake) audio.wake();
+    else if (pauseOnBlur) audio.sleep();
+
+    // A game held still by a console keeps its clock: it is drawing and nothing else, and that
+    // is what carries a step asked for from the very window that took the focus away.
+    const running = awake || !pauseOnBlur || (current?.paused ?? false);
+    if (running === engine.clock.isRunning()) return;
+    if (running) engine.clock.start();
+    else engine.clock.stop();
   };
   const lostFocus = () => watch(false);
   const gotFocus = () => watch(true);
@@ -243,11 +296,12 @@ export async function play(options: PlayOptions): Promise<Game> {
   // The window may have been left while the game was still loading.
   visibilityChanged();
 
-  return {
+  const game: Game = {
     engine,
     data,
     audio,
     get scene() { return current; },
+    debug: bridge,
     show,
     stop() {
       document.removeEventListener('pointerdown', resume);
@@ -260,6 +314,26 @@ export async function play(options: PlayOptions): Promise<Game> {
       engine.stop();
     },
   };
+
+  installOnWindow(game, options.debug);
+  return game;
+}
+
+/**
+ * Leaves the running game where a console can find it.
+ *
+ * A page that wants it under its own name says so, and one that would rather the window were
+ * left alone says `debug: false`. The name is only ever taken if nothing else has it: a page
+ * that has already put something there meant to.
+ */
+function installOnWindow(game: Game, where: PlayOptions['debug']): void {
+  if (where === false) return;
+  const name = typeof where === 'string' ? where : 'fusion';
+  const window = globalThis as unknown as Record<string, unknown>;
+  if (window[name] !== undefined && window[name] !== game) return;
+  window[name] = game;
+  console.info(`${game.data.manifest.appName} is on window.${name}; ${name}.debug.help() says ` +
+    'what can be asked of it.');
 }
 
 /** A display mode by name, falling back to the game's own size for anything unknown. */

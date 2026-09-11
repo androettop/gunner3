@@ -67,6 +67,19 @@ export class FusionInstance {
   hitBackground = false;
 
   /**
+   * Set for the tick on which the object was destroyed.
+   *
+   * Fusion does not take an object away where it is destroyed: it goes when the loop ends, and
+   * every event below the one that killed it still finds it. The bosses are built on exactly
+   * that. A boss's weak point is a separate object laid over its body, the event that destroys
+   * a shot against the body sits above the one that asks whether the shot reached the weak
+   * point, and taking the shot away on the spot leaves the second event nothing to find. The
+   * boss can then only be hurt through whatever sliver of the weak point hangs outside its
+   * body, which on level 2 is four pixels along the top of its head.
+   */
+  destroyedThisTick = false;
+
+  /**
    * The animation that finished on this tick, if any. Fusion reports an animation as over at the
    * moment it ends, before the object falls back to its resting animation, so the signal cannot
    * be recovered afterwards from which animation is playing.
@@ -76,8 +89,9 @@ export class FusionInstance {
   visible = true;
   destroyed = false;
   /**
-   * Set while the object is playing out its disappearing animation. It is on its way out (it no
-   * longer takes part in collisions), but it is still on screen and events can still see it.
+   * Set while the object is playing out its disappearing animation. It is on its way out (once
+   * the loop that killed it is over it takes no further part in collisions), but it is still on
+   * screen and events can still see it.
    */
   destroying = false;
   /** Index of the event that destroyed this instance, for tracing. */
@@ -632,6 +646,7 @@ export class FusionInstance {
   beginDestroy(): boolean {
     if (this.destroyed) return true;
     if (this.destroying) return false;
+    this.destroyedThisTick = true;
     if (!this.hasAnimation(DISAPPEARING_ANIMATION)) {
       this.destroyed = true;
       return true;
@@ -641,13 +656,92 @@ export class FusionInstance {
     return false;
   }
 
+  /**
+   * Whether the instance still takes part in collisions.
+   *
+   * Something on its way out no longer collides, so a dying shot cannot wound twice — but not
+   * before the loop that killed it has run out, since until then Fusion has not taken it away.
+   */
+  collides(): boolean {
+    return this.destroyedThisTick || (!this.destroyed && !this.destroying);
+  }
+
+  /**
+   * The opaque pixels of what the instance is showing, and where they sit in the frame.
+   *
+   * Null for anything drawn without an image of its own: a counter, a text object, a quick
+   * backdrop's ramp or tile. Those have nothing to consult but their box, which is what Fusion
+   * gives them too.
+   */
+  private pixels(): PixelMask | null {
+    if (this.counterBar || this.counterDigits) return null;
+    if (this.def.typeName === 'Text') return null;
+    if (isQuickBackdrop(this.def.detail)) return null;
+
+    const handle = this.currentImage();
+    if (handle === undefined) return null;
+    const meta = this.data.images.get(handle);
+    const alpha = this.sprites.alphaMap(handle);
+    // A picture still on its way in has no mask yet; its box stands in until it arrives.
+    if (!meta || !alpha) return null;
+
+    const box = this.bounds();
+    return {
+      alpha,
+      width: meta.width,
+      height: meta.height,
+      left: Math.round(box.left),
+      top: Math.round(box.top),
+    };
+  }
+
   overlaps(other: FusionInstance): boolean {
-    // Something on its way out no longer collides, so a dying shot cannot wound twice.
-    if (this.destroyed || other.destroyed || this.destroying || other.destroying) return false;
+    if (!this.collides() || !other.collides()) return false;
     const a = this.bounds();
     const b = other.bounds();
-    return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+    if (!(a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom)) return false;
+    return pixelsMeet(this.pixels(), other.pixels());
   }
+}
+
+/** An image's opaque pixels, one byte each, and the frame position of its top-left corner. */
+interface PixelMask {
+  alpha: Uint8Array;
+  width: number;
+  height: number;
+  left: number;
+  top: number;
+}
+
+/**
+ * Whether two images have an opaque pixel in the same place.
+ *
+ * Fusion collides actives against their pictures rather than their boxes, and the boxes are not
+ * a near enough stand-in: a sprite is a rectangle around a drawing, and the empty corners of it
+ * are where the difference shows. The player is 30 pixels wide and only ever fills 23 of them,
+ * so the shield he holds, which reaches 5 pixels past his box and 12 past his shoulder, was
+ * hit at the same instant he was. The shot is then destroyed against the shield by an event
+ * below the one that has already wounded him, and the shield reads as not working at all.
+ *
+ * Either side may be a thing with no picture, a counter or a text; those are their boxes, and
+ * having got this far the boxes have already met.
+ */
+function pixelsMeet(a: PixelMask | null, b: PixelMask | null): boolean {
+  if (!a || !b) return true;
+
+  const left = Math.max(a.left, b.left);
+  const right = Math.min(a.left + a.width, b.left + b.width);
+  const top = Math.max(a.top, b.top);
+  const bottom = Math.min(a.top + a.height, b.top + b.height);
+
+  for (let y = top; y < bottom; y++) {
+    const rowA = (y - a.top) * a.width - a.left;
+    const rowB = (y - b.top) * b.width - b.left;
+    for (let x = left; x < right; x++) {
+      if (a.alpha[rowA + x] && b.alpha[rowB + x]) return true;
+    }
+  }
+  return false;
 }
 
 /**

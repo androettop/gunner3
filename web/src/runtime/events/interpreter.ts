@@ -83,6 +83,21 @@ export class EventInterpreter {
     this.activeGroups.set(id, active);
   }
 
+  /** Every group the frame declares, which events belong to it, and whether it is switched on. */
+  groups(): { id: number; active: boolean; events: number[] }[] {
+    const events = new Map<number, number[]>();
+    for (const [event, group] of this.groupOfEvent) {
+      const list = events.get(group);
+      if (list) list.push(event);
+      else events.set(group, [event]);
+    }
+    return [...this.activeGroups].map(([id, active]) => ({
+      id,
+      active,
+      events: events.get(id) ?? [],
+    }));
+  }
+
   private groupActive(eventIndex: number): boolean {
     const group = this.groupOfEvent.get(eventIndex);
     if (group === undefined) return true;

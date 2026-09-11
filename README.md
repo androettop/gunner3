@@ -99,12 +99,43 @@ npm run pack       # fetches a copy of the game and packs it into public/game.zi
 npm run dev
 ```
 
-The dev server's page calls the library exactly as a built one does. Both leave the running game
-on `window.fusion`, which is what there is to reach for from a console: the scene, the loaded
-data, and `show(index)` for jumping to a frame.
+The dev server's page calls the library exactly as a built one does. Either way the runtime
+leaves the running game on `window.fusion`, and with it `fusion.debug`, which is described
+below.
 
 `npm run build` produces the library and its type declarations, and checks every opcode in the
 game's event tables against what the interpreter implements.
+
+### Looking at it while it runs
+
+A Fusion game is its own event table running over its own objects, and when it does something
+unexpected the question is always about that state. `fusion.debug` is the way into it from a
+console, and `fusion.debug.help()` lists the whole of it. What it hands back are the runtime's
+own objects rather than copies, so writing to one changes the game:
+
+```js
+fusion.debug.state();                    // the frame, the tick, the camera, what is playing
+fusion.debug.show(3);                    // jump to a frame, by index or by name
+fusion.debug.instances('Gunner');        // what is in the frame, as a table
+fusion.debug.set('Health', 0, 100);      // write an alterable value; a counter's is clamped
+fusion.debug.pause(); fusion.debug.step(1);          // hold the game, then hand it one tick
+fusion.debug.watch('Gunner');                        // report its values as they change
+fusion.debug.record(); fusion.debug.fired();         // count what fires, then read the count
+fusion.debug.trace(207); fusion.debug.traceLines();  // watch one event decide, condition by condition
+fusion.debug.destroyed();                            // what has been taken away, and by which event
+```
+
+Held still, the game is still drawn: only its logic stops, so a paused frame can still be looked
+at, moved around and asked what it is showing. What is asked for outlives the frame it was asked
+of, since what a level does as it opens is exactly what is worth watching: a held game stays
+held across a jump, and counting stays on.
+
+The game otherwise stops while its window belongs to somebody else, which is no use at all when
+the window being used is the browser's own tools: `fusion.debug.pauseOnBlur(false)` turns that
+off, and it is remembered across the reloads such work is made of.
+
+A page that would rather keep its window to itself passes `debug: false` to `play`, or a name of
+its own to be reached under.
 
 ### Building the unpacker
 
@@ -157,8 +188,9 @@ condition fails its event rather than letting it fire, so gaps surface as missin
 rather than wrong behaviour.
 
 Collision is per pixel, not per bounding box, as Fusion's is: every backdrop marked an obstacle
-is rasterised into a mask for the frame. The movement engines are stepped in game ticks rather
-than render frames, since Fusion physics is written as per-tick deltas.
+is rasterised into a mask for the frame, and two objects meet where the pictures they are
+showing have an opaque pixel in the same place. The movement engines are stepped in game ticks
+rather than render frames, since Fusion physics is written as per-tick deltas.
 
 ### Deliberate deviations
 
