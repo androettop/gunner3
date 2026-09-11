@@ -188,8 +188,9 @@ condition fails its event rather than letting it fire, so gaps surface as missin
 rather than wrong behaviour.
 
 Collision is per pixel, not per bounding box, as Fusion's is: every backdrop marked an obstacle
-is rasterised into a mask for the frame. The movement engines are stepped in game ticks rather
-than render frames, since Fusion physics is written as per-tick deltas.
+is rasterised into a mask for the frame, and two objects meet where the pictures they are
+showing have an opaque pixel in the same place. The movement engines are stepped in game ticks
+rather than render frames, since Fusion physics is written as per-tick deltas.
 
 ### Deliberate deviations
 
