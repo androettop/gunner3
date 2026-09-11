@@ -118,6 +118,19 @@ export class FrameScene extends Scene {
   private frontZ = FRONT_Z;
   private backZ = 0;
 
+  /**
+   * Where the next object to arrive is drawn.
+   *
+   * Fusion draws what a game creates over what the frame was laid out with, and over whatever
+   * was created before it: the order is the order things appeared in, and it is why the game
+   * has to say so when it wants something the other way round, as it does every tick for the
+   * shot trails. Counting the live instances instead gives a number that falls as a level
+   * clears things away, and the level 2 boss sits at 1870 of the 1871 objects its frame was
+   * laid out with while only 1836 of them are left by the time it is fought: every spark and
+   * explosion it throws off when it is hit was drawn behind it.
+   */
+  private nextZ = 0;
+
   bringToFront(instance: FusionInstance): void {
     instance.actor.z = ++this.frontZ;
   }
@@ -184,9 +197,8 @@ export class FrameScene extends Scene {
       const instance = new FusionInstance(objectDef, def.x, def.y, this.data, this.sprites);
       // Backdrops sit behind everything; instance order decides the rest.
       // Backdrops, and anything the object declares as background, order behind the actors.
-      instance.actor.z = instance.isBackgroundLayer
-        ? BACKDROP_Z + this.instances.length
-        : this.instances.length;
+      const z = this.nextZ++;
+      instance.actor.z = instance.isBackgroundLayer ? BACKDROP_Z + z : z;
 
       this.instances.push(instance);
       const group = this.byObject.get(objectDef.id);
@@ -482,7 +494,7 @@ export class FrameScene extends Scene {
     if (!def) return null;
 
     const instance = new FusionInstance(def, x, y, this.data, this.sprites);
-    instance.actor.z = this.instances.length;
+    instance.actor.z = this.nextZ++;
     this.instances.push(instance);
 
     const group = this.byObject.get(objectId);
