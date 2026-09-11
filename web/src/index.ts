@@ -226,7 +226,7 @@ export async function play(options: PlayOptions): Promise<Game> {
 
   // A pad is polled rather than plugged in: there is nothing to wait for and nothing to turn
   // on, and until one is actually held this costs a look at an empty list once a frame.
-  pad = new PadControl(engine.canvas, DEFAULT_PAD_LAYOUTS);
+  pad = new PadControl(engine.canvas, DEFAULT_PAD_LAYOUTS, reading);
 
   // The rest of what was chosen last time, put back now that there is something to put it on.
   shell.setSmoothing(settings.smoothing);

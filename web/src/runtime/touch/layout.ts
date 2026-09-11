@@ -125,14 +125,14 @@ export const DEFAULT_CHROME: TouchButton[] = [
  * The game keeps a counter per weapon saying whether it has been picked up, and none for the
  * first, which the Gunner starts with. Those counters are what the arrows walk by.
  */
-const WEAPON_KEYS: KeyCode[] = [
+export const WEAPON_KEYS: KeyCode[] = [
   'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9',
   'Digit0',
   'KeyQ', 'KeyW', 'KeyE', 'KeyR', 'KeyT', 'KeyY', 'KeyU', 'KeyI', 'KeyO', 'KeyP',
   'KeyA', 'KeyS',
 ];
 
-const WEAPON_OWNED = WEAPON_KEYS.map((_, at) => (at === 0 ? '' : `Gun Get ${at + 1}`));
+export const WEAPON_OWNED = WEAPON_KEYS.map((_, at) => (at === 0 ? '' : `Gun Get ${at + 1}`));
 
 /**
  * Gunner 3's own controls, as this game plays them.
