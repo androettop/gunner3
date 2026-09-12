@@ -1,4 +1,5 @@
 import type { KeyCode } from '../keys';
+import type { PadHint } from './hints';
 import { WEAPON_KEYS, WEAPON_OWNED } from '../touch/layout';
 
 /**
@@ -23,7 +24,11 @@ import { WEAPON_KEYS, WEAPON_OWNED } from '../touch/layout';
  * and B on one is where circle is on another. The position is what a hand knows, so that is
  * what a layout names, and the browser has already put whatever pad is held into that order.
  */
-export type PadButton = 'south' | 'east' | 'west' | 'north' | 'l1' | 'r1' | 'l2' | 'r2';
+export type PadButton =
+  | 'south' | 'east' | 'west' | 'north'
+  | 'l1' | 'r1' | 'l2' | 'r2'
+  /** The small pair in the middle: select and start, whatever this year's pad calls them. */
+  | 'select' | 'start';
 
 /** The keys a stick asks for, by the way it is pushed. A direction left out is not read. */
 export interface PadSteering {
@@ -61,6 +66,11 @@ export interface PadLayout {
   /** Held down for as long as the button is. */
   buttons?: Partial<Record<PadButton, KeyCode[]>>;
   weapons?: PadWeapons;
+  /**
+   * What to say along the foot of the screen while the pad is being played with, in the order
+   * it is to be read. A pad carries no labels a game can borrow, so the game says them.
+   */
+  hints?: PadHint[];
 }
 
 /**
@@ -106,5 +116,14 @@ export const DEFAULT_PAD_LAYOUTS: PadLayout[] = [
       owned: WEAPON_OWNED,
       selected: 'Weapon',
     },
+    // What is worth saying and no more: the two thumbsticks need no telling, and a row long
+    // enough to read as a sentence is a row nobody reads.
+    hints: [
+      { button: 'west', label: 'Fire' },
+      { button: 'south', label: 'Jump' },
+      { button: 'north', label: 'Roll' },
+      { button: 'l1', label: 'Prev weapon' },
+      { button: 'r1', label: 'Next weapon' },
+    ],
   },
 ];

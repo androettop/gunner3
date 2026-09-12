@@ -1,5 +1,7 @@
+import type { InputWatcher } from '../input';
 import type { KeyCode } from '../keys';
 import { sendKey } from '../keys';
+import { PadHintBar, padKind, type PadHint } from './hints';
 import type { PadButton, PadLayout, PadSteering, PadWeapons } from './layout';
 
 /** What a control asks the game, which is one object's reading at a time. */
@@ -38,6 +40,7 @@ const SOUTH = 0;
 const EAST = 1;
 const BUTTONS: Record<PadButton, number> = {
   south: SOUTH, east: EAST, west: 2, north: 3, l1: 4, r1: 5, l2: 6, r2: 7,
+  select: 8, start: 9,
 };
 const DPAD_UP = 12;
 const DPAD_DOWN = 13;
@@ -83,11 +86,30 @@ const RELEASE = 0.35;
 /** How far a stick has to move between two readings to be a hand rather than a stick settling. */
 const STIR = 0.15;
 
-/** A pointer id of its own, so the cursor is never confused with the player's real mouse. */
-const POINTER_ID = 9001;
+/**
+ * What the pad does on a frame no layout claims, which is the runtime's doing rather than the
+ * game's: the cursor is pressed with one button and the game's own screens are left with the
+ * other, whatever game is being played.
+ */
+const POINTING_HINTS: PadHint[] = [
+  { button: 'south', label: 'Select' },
+  { button: 'east', label: 'Back' },
+];
+
+/**
+ * The hint the runtime adds to whatever the game has to say: the way to be rid of the row.
+ *
+ * It is on every line and it stands apart at the right of it, away from the game's own hints
+ * gathered at the left: a row of hints is for the first few minutes and in the way afterwards,
+ * and a player who cannot see how to put it away has to put up with it. That it goes away with
+ * the rest is the cost of saying so at all: what brings the row back is the button that sent it
+ * away, which is the one thing about it worth remembering.
+ */
+const HIDE_HINT: PadHint = { button: 'select', label: 'Hide' };
 
 export class PadControl {
   private readonly cursor: HTMLDivElement;
+  private readonly hints: PadHintBar;
   private readonly layouts: PadLayout[];
   private frame = -1;
 
@@ -113,14 +135,14 @@ export class PadControl {
    */
   private weaponAt = 0;
 
-  /** Set while dispatching, so the cursor does not mistake its own pointer for a real one. */
-  private sending = false;
-
   private visible = false;
 
+  /** Whether the player has asked for the row of hints to go away. */
+  private hintsHidden = false;
+  private hintsButtonDown = false;
+
   /**
-   * Whether the pad is the thing being played with, which the page's own cursor is asked to
-   * keep out of the way of.
+   * Whether the pad is the thing being played with, which the watcher settles rather than this.
    *
    * A mouse pointer sitting over a game nobody is pointing with is in the way of the game, and
    * on a level, where the pad draws no cursor of its own, it is the only thing on screen still
@@ -128,7 +150,12 @@ export class PadControl {
    * the mouse is moved, which is the same hand-over the drawn cursor makes in the other
    * direction.
    */
-  private driving = false;
+  private get driving(): boolean {
+    return this.watcher.mode === 'pad';
+  }
+
+  /** Whether the page's own pointer is being kept out of the way, so it is put back once. */
+  private hiding = false;
 
   /** The pad as it was last read, for telling a hand moving it from a stick that leans. */
   private wasAt: number[] | null = null;
@@ -140,10 +167,13 @@ export class PadControl {
   constructor(
     private readonly canvas: HTMLCanvasElement,
     layouts: PadLayout[],
+    /** Who is playing the game, which the pad both asks and answers. */
+    private readonly watcher: InputWatcher,
     /** What the game says about itself, which is how the shoulders know what it is carrying. */
     private readonly reading: Reading = () => null,
   ) {
     this.layouts = layouts;
+    this.hints = new PadHintBar(canvas);
     this.cursor = document.createElement('div');
     this.cursor.className = 'fusion-pad-cursor';
     this.cursor.append(style());
@@ -154,10 +184,6 @@ export class PadControl {
     this.cursor.style.display = 'none';
     document.body.append(this.cursor);
 
-    // A real mouse takes the screen back: two cursors on one page, only one of which answers
-    // the hand moving it, is a game that looks broken. The pad shows its own again as soon as
-    // it is touched.
-    this.canvas.addEventListener('pointermove', this.realPointer);
     window.addEventListener('gamepaddisconnected', this.hide);
 
     this.polling = requestAnimationFrame(this.poll);
@@ -176,11 +202,11 @@ export class PadControl {
   /** Takes the cursor off the page and stops reading the pad. */
   stop(): void {
     cancelAnimationFrame(this.polling);
-    this.canvas.removeEventListener('pointermove', this.realPointer);
     window.removeEventListener('gamepaddisconnected', this.hide);
     this.releaseAll();
-    this.canvas.style.cursor = '';
+    this.showPagePointer();
     this.cursor.remove();
+    this.hints.remove();
   }
 
   /** The layout for the frame being played, or nothing on a frame the pad only points at. */
@@ -196,16 +222,37 @@ export class PadControl {
     const elapsed = this.lastPoll ? Math.min((now - this.lastPoll) / 1000, 0.1) : 0;
     this.lastPoll = now;
 
-    const pad = connectedPad();
-    // A pad unplugged mid-game leaves whatever it was holding down held, which is a player
-    // walking into a wall for ever.
+    // A pad is reported to every page that asks, whether or not anybody is looking at it. Two
+    // windows of the same game would both answer one stick, and the player would watch a cursor
+    // move in a window they are not in. A keyboard goes to the window with the focus, so a pad
+    // does too.
+    const pad = document.hasFocus() ? connectedPad() : null;
+    // A pad unplugged mid-game, or a window walked away from, leaves whatever it was holding
+    // down held, which is a player walking into a wall for ever.
     if (!pad) {
       this.releaseAll();
       this.hide();
+      this.hints.hide();
       return;
     }
 
     if (this.stirred(pad)) this.drive();
+
+    // Something else has been picked up since the last look: the cursor, the row of hints and
+    // the page's own pointer all go back to how they were, and the pad goes quiet.
+    if (!this.driving) {
+      this.releaseAll();
+      this.hide();
+      this.hints.hide();
+      this.showPagePointer();
+      return;
+    }
+
+    // Read here rather than inside either mode, since the row is up in both and the button that
+    // puts it away is the pad's own rather than anything the game knows about.
+    const asked = down(pad, BUTTONS.select);
+    if (asked && !this.hintsButtonDown) this.hintsHidden = !this.hintsHidden;
+    this.hintsButtonDown = asked;
 
     const layout = this.layout;
     if (layout) {
@@ -214,6 +261,14 @@ export class PadControl {
     } else {
       this.aimCursor(pad, elapsed);
       this.cursorButtons(pad);
+    }
+
+    // The hints answer a question only a hand on a pad is asking, so they are up while there
+    // is one and down the moment the game goes back to a mouse, or the player says so.
+    if (!this.hintsHidden) {
+      this.hints.show(layout?.hints ?? POINTING_HINTS, HIDE_HINT, padKind(pad.id));
+    } else {
+      this.hints.hide();
     }
   };
 
@@ -328,7 +383,9 @@ export class PadControl {
 
     // Placed in the middle of the picture the first time a pad asks for it, since a cursor has
     // to start somewhere and the middle is the shortest way to anywhere.
-    if (!this.at) this.at = { x: picture.left + picture.width / 2, y: picture.top + picture.height / 2 };
+    if (!this.at) {
+      this.at = { x: picture.left + picture.width / 2, y: picture.top + picture.height / 2 };
+    }
 
     const speed = picture.height * CURSOR_SPEED * elapsed;
     // The cursor stays on the game. Everything it can ask for is drawn there, and a cursor lost
@@ -381,11 +438,22 @@ export class PadControl {
    *
    * Dispatched at the canvas, which is where Excalibur listens, and no further: the page's own
    * listeners are not told that a pointer went down when no hand put one there.
+   *
+   * It arrives under the mouse's own pointer id rather than one of its own, which looks like the
+   * safer choice and is the opposite of it. Excalibur numbers pointers by where their native id
+   * falls among the ids it has seen and not yet seen the end of, and a move is never the end of
+   * one: a mouse that has moved since the last click sits in that list for good. A cursor under
+   * an id of its own is then the second pointer, and the game only ever watches the first, so
+   * the hover sticks wherever the mouse last was and the clicks go nowhere. Clicking the mouse
+   * cures it, which is the tell: the click is what takes the mouse back out of the list.
+   *
+   * So the cursor arrives as the mouse rather than beside it. One id, one pointer, and whichever
+   * of the two moved last is the one the game is following.
    */
   private point(type: 'pointermove' | 'pointerdown' | 'pointerup'): void {
     if (!this.at) return;
     const event = new PointerEvent(type, {
-      pointerId: POINTER_ID,
+      pointerId: this.watcher.mouseId,
       pointerType: 'mouse',
       isPrimary: true,
       clientX: this.at.x,
@@ -400,9 +468,9 @@ export class PadControl {
     Object.defineProperty(event, 'pageX', { value: this.at.x + window.scrollX });
     Object.defineProperty(event, 'pageY', { value: this.at.y + window.scrollY });
 
-    this.sending = true;
+    // Untrusted, being built rather than raised, which is how the watcher knows not to take
+    // the pad's own cursor for a hand on a mouse.
     this.canvas.dispatchEvent(event);
-    this.sending = false;
   }
 
   private draw(): void {
@@ -446,19 +514,18 @@ export class PadControl {
 
   /** The pad has the game: the page's own pointer is not wanted over it. */
   private drive(): void {
-    if (this.driving) return;
-    this.driving = true;
+    this.watcher.use('pad');
+    if (this.hiding) return;
+    this.hiding = true;
     this.canvas.style.cursor = 'none';
   }
 
-  /** The mouse has it back, drawn cursor down and the page's own pointer up. */
-  private readonly realPointer = (): void => {
-    if (this.sending) return;
-    this.hide();
-    if (!this.driving) return;
-    this.driving = false;
+  /** Something else has it: the page's own pointer comes back, and the drawn one goes. */
+  private showPagePointer(): void {
+    if (!this.hiding) return;
+    this.hiding = false;
     this.canvas.style.cursor = '';
-  };
+  }
 }
 
 /**

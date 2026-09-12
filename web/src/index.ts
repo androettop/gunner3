@@ -43,6 +43,7 @@ import { DEFAULT_CHROME, DEFAULT_LAYOUTS, type TouchLayout } from './runtime/tou
 import {
   ControlOverlay, type Reading, type Shell, silhouetteFrom,
 } from './runtime/touch/overlay';
+import { InputWatcher, looksLikeTouch, type InputMode } from './runtime/input';
 import { DEFAULT_PAD_LAYOUTS } from './runtime/pad/layout';
 import { PadControl } from './runtime/pad/pad';
 
@@ -55,9 +56,12 @@ export interface PlayOptions {
    */
   canvas?: HTMLCanvasElement | string;
   /**
-   * Touch controls, over the screen. Left out, they come up on the machines that look like they
-   * are played by thumb, and the settings panel turns them on or off from there. `true` and
-   * `false` decide it outright; a layout of your own replaces the game's default one.
+   * Touch controls, over the screen.
+   *
+   * Nothing has to be said: they come up when the game is played with a thumb and go down when
+   * it is played with anything else, which the runtime watches for rather than asks about. A
+   * layout of your own replaces the game's default one, and `false` says the game has no thumb
+   * controls at all, whatever is picked up.
    *
    * The buttons that fit the game to the screen are up either way: they belong to the page
    * rather than to the game, and are as useful with a mouse as with a thumb.
@@ -102,11 +106,11 @@ const LOADING_HEIGHT = 480;
  */
 export async function play(options: PlayOptions): Promise<Game> {
   const layouts = layoutsFor(options.touch);
-  // What the player last chose, over what this machine would start with. The guess at whether
-  // the game is played by thumb is only ever the first answer; after that it is their own.
+  // What the player last chose, over what a game starts with.
   const settings = readSettings({
-    touch: wantsTouch(options.touch),
-    displayMode: wantsTouch(options.touch) ? DisplayMode.FitScreen : DisplayMode.Fixed,
+    // As large as the window allows, letterboxed to keep the game's own shape: a game drawn at
+    // the size a monitor of 2005 was is a postage stamp on a monitor of now.
+    displayMode: DisplayMode.FitScreen,
     smoothing: false,
     musicVolume: 1,
     effectsVolume: 1,
@@ -155,6 +159,16 @@ export async function play(options: PlayOptions): Promise<Game> {
   let debug: Debug | null = null;
   let overlay: ControlOverlay | null = null;
   let pad: PadControl | null = null;
+  /**
+   * What the game is being played with, which nobody chooses: a thumb on the screen puts the
+   * touch controls up, a pad puts its own cursor and its row of hints up, and a mouse or a
+   * keyboard takes both away. The machine's own guess is only the first answer, and stands
+   * until the player does something.
+   */
+  const watcher = new InputWatcher(
+    (mode: InputMode) => { if (overlay) overlay.touch = mode === 'touch'; },
+    looksLikeTouch() ? 'touch' : 'mouse',
+  );
   let sceneCount = 0;
   let switching = false;
 
@@ -213,20 +227,19 @@ export async function play(options: PlayOptions): Promise<Game> {
     return instance ? instance.values[0] : null;
   };
 
-  const shell = shellFor(engine, audio, () => overlay?.touch ?? false, settings, keep);
+  const shell = shellFor(engine, audio, () => watcher.mode === 'touch', settings, keep);
   overlay = new ControlOverlay(
     layouts,
-    settings.touch,
+    watcher.mode === 'touch',
     DEFAULT_CHROME,
     (handle) => silhouetteFrom(sprites.source(handle)),
     shell,
     reading,
-    (on) => { settings.touch = on; keep(); },
   );
 
   // A pad is polled rather than plugged in: there is nothing to wait for and nothing to turn
   // on, and until one is actually held this costs a look at an empty list once a frame.
-  pad = new PadControl(engine.canvas, DEFAULT_PAD_LAYOUTS, reading);
+  pad = new PadControl(engine.canvas, DEFAULT_PAD_LAYOUTS, watcher, reading);
 
   // The rest of what was chosen last time, put back now that there is something to put it on.
   shell.setSmoothing(settings.smoothing);
@@ -312,6 +325,7 @@ export async function play(options: PlayOptions): Promise<Game> {
       window.removeEventListener('focus', gotFocus);
       document.removeEventListener('visibilitychange', visibilityChanged);
       audio.stopMusic();
+      watcher.stop();
       overlay?.destroy();
       pad?.stop();
       engine.stop();
@@ -339,33 +353,16 @@ function installOnWindow(game: Game, where: PlayOptions['debug']): void {
     'what can be asked of it.');
 }
 
-/** A display mode by name, falling back to the game's own size for anything unknown. */
+/** A display mode by name, falling back to the one a game starts with for anything unknown. */
 function displayModeNamed(name: string): DisplayMode {
-  return DISPLAY_MODES.find((mode) => mode === name) ?? DisplayMode.Fixed;
+  return DISPLAY_MODES.find((mode) => mode === name) ?? DisplayMode.FitScreen;
 }
 
 /** The layouts to play by, which are the game's own unless a page brings its own. */
 function layoutsFor(touch: PlayOptions['touch']): TouchLayout[] {
-  return Array.isArray(touch) ? touch : DEFAULT_LAYOUTS;
-}
-
-/**
- * Whether to start with the controls up.
- *
- * Asked for nothing, the machine is taken at its word: a phone or a tablet says so in its user
- * agent, and iPads since iOS 13 say they are desktops and give themselves away by the number of
- * fingers they accept instead. Either way the settings panel has the last word, so a wrong
- * guess is one tap from being put right.
- */
-function wantsTouch(touch: PlayOptions['touch']): boolean {
-  if (typeof touch === 'boolean') return touch;
-  if (Array.isArray(touch)) return true;
-  const agent = navigator.userAgent;
-  if (/Android|iPhone|iPad|iPod|Windows Phone|IEMobile|BlackBerry|Opera Mini|Mobile/i.test(agent)) {
-    return true;
-  }
-  // An iPad since iOS 13 calls itself a Mac; a Mac that takes a finger is one.
-  return /Macintosh/.test(agent) && navigator.maxTouchPoints > 0;
+  if (Array.isArray(touch)) return touch;
+  // Said no to outright, the game has no thumb controls at all, whatever is played with.
+  return touch === false ? [] : DEFAULT_LAYOUTS;
 }
 
 /**

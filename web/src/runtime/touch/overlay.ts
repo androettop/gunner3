@@ -78,8 +78,6 @@ export class ControlOverlay {
     private readonly silhouette: (handle: number) => string | null,
     private readonly shell: Shell,
     private readonly reading: Reading = () => null,
-    /** Told whenever the panel turns the controls on or off, so the choice can be kept. */
-    private readonly onTouchChange: (on: boolean) => void = () => {},
   ) {
     this.layouts = layouts;
     this.playedByTouch = touch && layouts.length > 0;
@@ -97,7 +95,18 @@ export class ControlOverlay {
     window.addEventListener('orientationchange', this.place);
   }
 
-  /** Whether the game is being played by thumb, which decides if its own controls are up. */
+  /**
+   * Whether the game is being played by thumb, which decides if its own controls are up.
+   *
+   * Not a choice anyone makes: it is told this by what the player has just done. A thumb on the
+   * screen puts the controls up, and a hand moving to a mouse, a keyboard or a pad takes them
+   * down, since buttons drawn over the game for a thumb that is busy elsewhere are in the way
+   * of whatever it is busy with.
+   *
+   * The two buttons in the corner stay up either way. They fit the game to the screen and say
+   * how loud it is, which are the page's business rather than the game's, and they are as
+   * useful with a pad in hand as without one.
+   */
   get touch(): boolean {
     return this.playedByTouch;
   }
@@ -107,7 +116,6 @@ export class ControlOverlay {
     this.playedByTouch = on;
     this.wearLean();
     this.render();
-    this.onTouchChange(on);
   }
 
   /** Puts up the layout for a frame, or takes the controls down if no layout covers it. */
@@ -235,9 +243,6 @@ export class ControlOverlay {
       });
       modes.append(option);
     }
-    panel.append(row('Touch', this.toggle('touch-controls', this.playedByTouch, (on) => {
-      this.touch = on;
-    })));
     panel.append(row('Screen', modes));
     panel.append(row('Smooth', this.toggle('smoothing', this.shell.smoothing(), (on) => {
       this.shell.setSmoothing(on);

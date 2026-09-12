@@ -12,8 +12,6 @@
 const KEY = 'fusion-runtime.settings';
 
 export interface Settings {
-  /** Whether the game is played by thumb, with its controls over the screen. */
-  touch: boolean;
   /** How the game is fitted to the screen, named as Excalibur names it. */
   displayMode: string;
   /** Whether the game is smoothed as it is scaled up. */
@@ -31,7 +29,6 @@ export interface Settings {
 export function readSettings(fallback: Settings): Settings {
   const stored = parse(read());
   return {
-    touch: typeof stored.touch === 'boolean' ? stored.touch : fallback.touch,
     displayMode: typeof stored.displayMode === 'string' ? stored.displayMode : fallback.displayMode,
     smoothing: typeof stored.smoothing === 'boolean' ? stored.smoothing : fallback.smoothing,
     musicVolume: volume(stored.musicVolume, fallback.musicVolume),
