@@ -439,16 +439,11 @@ export class PadControl {
    * Dispatched at the canvas, which is where Excalibur listens, and no further: the page's own
    * listeners are not told that a pointer went down when no hand put one there.
    *
-   * It arrives under the mouse's own pointer id rather than one of its own, which looks like the
-   * safer choice and is the opposite of it. Excalibur numbers pointers by where their native id
-   * falls among the ids it has seen and not yet seen the end of, and a move is never the end of
-   * one: a mouse that has moved since the last click sits in that list for good. A cursor under
-   * an id of its own is then the second pointer, and the game only ever watches the first, so
-   * the hover sticks wherever the mouse last was and the clicks go nowhere. Clicking the mouse
-   * cures it, which is the tell: the click is what takes the mouse back out of the list.
-   *
-   * So the cursor arrives as the mouse rather than beside it. One id, one pointer, and whichever
-   * of the two moved last is the one the game is following.
+   * It arrives under the mouse's own pointer id rather than one of its own, so that the cursor
+   * and the mouse are one pointer rather than two: whichever of them moved last is where the
+   * game is being pointed, and a hand going from one to the other never leaves a second cursor
+   * hovering somewhere the player is not. What the game follows is kept in runtime/pointer.ts,
+   * which follows whichever pointer moved last rather than whichever Excalibur numbered first.
    */
   private point(type: 'pointermove' | 'pointerdown' | 'pointerup'): void {
     if (!this.at) return;

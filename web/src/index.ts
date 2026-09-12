@@ -34,6 +34,7 @@ import { AudioBank } from './runtime/audio/player';
 import { Debug, pauseOnBlurWanted } from './runtime/debug';
 import { GlobalValues } from './runtime/globals';
 import { IniStore } from './runtime/ini';
+import { GamePointer } from './runtime/pointer';
 import { GameLoader } from './runtime/loading';
 import { Preloader } from './runtime/preloader';
 import { FrameScene } from './runtime/scene';
@@ -155,6 +156,9 @@ export async function play(options: PlayOptions): Promise<Game> {
   // them still filled.
   const ini = new IniStore();
   const globals = new GlobalValues();
+  // One pointer for the whole game, following whichever the player is using rather than the one
+  // Excalibur happens to number first, and handed to each frame as it opens.
+  const pointer = new GamePointer(engine);
   let current: FrameScene | null = null;
   let debug: Debug | null = null;
   let overlay: ControlOverlay | null = null;
@@ -185,8 +189,21 @@ export async function play(options: PlayOptions): Promise<Game> {
       // Attached before the scene initialises, which is when its instances are built and take
       // up what their objects were left holding.
       scene.globals = globals;
+      scene.pointer = pointer;
       // A frame jump cannot tear down the scene it is running inside, so defer it a tick.
       scene.onJumpToFrame = (next) => queueMicrotask(() => void show(next));
+      // The game's own Exit ended the application, which on Windows closed its window, so this
+      // asks the browser to close this one. A browser only lets a script close a window a
+      // script opened: an installed app's window is one, and Exit closes the app. A tab
+      // somebody navigated to is not, and the browser says so and leaves the window standing.
+      // There is nothing else a page may do about that, so the game does the nearest thing to
+      // having been closed and opened again, and starts from its first frame.
+      scene.onEndApplication = () => {
+        window.close();
+        // Deferred: a window that is closing is torn down after this returns, and one that is
+        // not says so by still being here.
+        setTimeout(() => { if (!window.closed) void show(0); });
+      };
       // Whatever a console asked of the last frame (that the game be held, that firings be
       // counted) is asked of this one before it opens, so the answer covers its first tick.
       debug?.adopt(scene);
@@ -203,6 +220,17 @@ export async function play(options: PlayOptions): Promise<Game> {
       switching = false;
     }
   }
+
+  // The frame that is playing is the one the pointer speaks to; the ones left behind hear
+  // nothing, which is what a scene of Excalibur's own listening would not have given us.
+  pointer.onDown = () => current?.pointerDown();
+  pointer.onUp = () => current?.pointerUp();
+  pointer.onCancel = () => current?.pointerCancelled();
+
+  // The game is played on the canvas, so the browser is told to keep its own gestures off it:
+  // without this a finger that slides is taken for a scroll or a zoom, and the touch it was
+  // part of is cancelled rather than released. That is what leaves a phantom pointer behind.
+  engine.canvas.style.touchAction = 'none';
 
   await engine.start(loader);
 
@@ -325,6 +353,7 @@ export async function play(options: PlayOptions): Promise<Game> {
       window.removeEventListener('focus', gotFocus);
       document.removeEventListener('visibilitychange', visibilityChanged);
       audio.stopMusic();
+      pointer.stop();
       watcher.stop();
       overlay?.destroy();
       pad?.stop();

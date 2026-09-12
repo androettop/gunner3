@@ -540,7 +540,7 @@ function sampleHandle(ace: AceDef): number {
 
 /** True when the mouse pointer is inside the instance's box. */
 function under(ctx: Ctx, i: FusionInstance): boolean {
-  const pointer = ctx.engine.input.pointers.primary.lastWorldPos;
+  const pointer = ctx.scene.pointerPosition();
   if (!pointer) return false;
   const b = i.bounds();
   return pointer.x >= b.left && pointer.x <= b.right && pointer.y >= b.top && pointer.y <= b.bottom;

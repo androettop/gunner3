@@ -9,6 +9,7 @@ import { clearedWhenTooFar, tooFarOutside, update as updateMovement } from './mo
 import type { AudioBank } from './audio/player';
 import { GlobalValues } from './globals';
 import { IniStore } from './ini';
+import type { GamePointer } from './pointer';
 import { Actor } from 'excalibur';
 import { answerAt, layOut, questionFor, questionGraphic, type PendingQuestion } from './question';
 
@@ -43,6 +44,11 @@ export class FrameScene extends Scene {
   /** Alterable values of global objects, carried between frames by the host. */
   globals: GlobalValues = new GlobalValues();
   audio: AudioBank | null = null;
+  /**
+   * The pointer, kept by the host rather than by the frame: it is one mouse across the whole
+   * game, and a frame that opened under a still finger has to know where that finger is.
+   */
+  pointer: GamePointer | null = null;
   /** Set by the host so "jump to frame" can change scenes. */
   onJumpToFrame: ((index: number) => void) | null = null;
   onEndApplication: (() => void) | null = null;
@@ -210,15 +216,6 @@ export class FrameScene extends Scene {
     }
 
     engine.input.keyboard.on('press', (e) => this.pressedKeys.add(e.key));
-    engine.input.pointers.primary.on('down', () => {
-      if (this.questionOpen) { this.updateQuestionHover(); this.questionPressed = true; return; }
-      this.pointerPressed = true;
-    });
-    // A question is answered on release over a button, the way the runtime's own panel works:
-    // pressing one and sliding off it picks nothing.
-    engine.input.pointers.primary.on('up', () => {
-      if (this.questionOpen && this.questionPressed) this.takeAnswer();
-    });
 
     // Before any event runs: a global object arrives holding what it was left holding, so the
     // frame's own start-up events see the loaded state rather than the defaults.
@@ -370,8 +367,33 @@ export class FrameScene extends Scene {
 
   /** Pointer position in frame coordinates, for mouse-controlled movements. */
   pointerPosition(): { x: number; y: number } | null {
-    const pos = this.engine?.input?.pointers?.primary?.lastWorldPos;
-    return pos ? { x: pos.x, y: pos.y } : null;
+    return this.pointer?.position() ?? null;
+  }
+
+  /**
+   * The pointer went down on the frame, which the host hands over: the scene that is playing is
+   * the one that hears it, and a scene left behind hears nothing.
+   */
+  pointerDown(): void {
+    if (this.questionOpen) {
+      this.updateQuestionHover();
+      this.questionPressed = true;
+      return;
+    }
+    this.pointerPressed = true;
+  }
+
+  /**
+   * A question is answered on release over a button, the way the runtime's own panel works:
+   * pressing one and sliding off it picks nothing.
+   */
+  pointerUp(): void {
+    if (this.questionOpen && this.questionPressed) this.takeAnswer();
+  }
+
+  /** A press the browser took away is a press let go of nowhere: it chooses nothing. */
+  pointerCancelled(): void {
+    this.questionPressed = false;
   }
 
   /** Adds an instance's solid pixels to the obstacle mask, if its object is an obstacle. */
