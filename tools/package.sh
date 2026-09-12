@@ -14,6 +14,10 @@
 #
 # Needs Rust and Node. The game is read by tools/unpack, which is this repository's own.
 #
+# What comes out is installable: the page carries a web app manifest and a worker that keeps a
+# copy of the build, and the icon on it is the one the game's own executable wears, read out of
+# it by tools/unpack.
+#
 # The output has to be served over HTTP: a page opened from the file system cannot fetch its
 # own package. Any static server will do:
 #
@@ -73,20 +77,36 @@ unzip -p "$STAGE/game.zip" game.json > "$STAGE/game.json"
 echo "==> Building the runtime library"
 GAME_PACKAGE="$STAGE/game.zip" npm run build --silent
 
+# The package carries the game's icon, as the executable wears it and at the sizes a manifest
+# asks for. A file the package does not have is simply not laid out.
+take() { # take <name in the package> <destination>
+  if unzip -p "$STAGE/game.zip" "$1" > "$2" 2> /dev/null; then :; else rm -f "$2"; fi
+}
+
 echo "==> Writing $OUT"
 if [ "$SINGLE_FILE" = 1 ]; then
+  # One file has nowhere to keep an icon beside it, so it carries it the way it carries the
+  # rest, and there is nothing to install: a page off the file system gets no worker.
+  take icon.png "$STAGE/icon.png"
   node scripts/write-page.mjs --manifest "$STAGE/game.json" --library dist/fusion-runtime.js \
-    --inline "$STAGE/game.zip" --out "$OUT/index.html"
+    --inline "$STAGE/game.zip" --icon "$STAGE/icon.png" --out "$OUT/index.html"
   echo
   echo "Built $OUT/index.html: open it in a browser."
 else
   # Anything already in the output that this build replaces goes, so a rebuild does not leave
   # the previous library behind; a package under another name is left alone.
-  rm -f "$OUT/index.html" "$OUT/fusion-runtime.js" "$OUT/game.zip"
+  rm -f "$OUT/index.html" "$OUT/fusion-runtime.js" "$OUT/game.zip" \
+    "$OUT/manifest.webmanifest" "$OUT/sw.js" "$OUT"/icon*.png
   cp dist/fusion-runtime.js "$OUT/fusion-runtime.js"
   cp "$STAGE/game.zip" "$OUT/game.zip"
+  take icon.png "$OUT/icon.png"
+  take icons/192.png "$OUT/icon-192.png"
+  take icons/512.png "$OUT/icon-512.png"
+  take icons/maskable.png "$OUT/icon-maskable.png"
   node scripts/write-page.mjs --manifest "$STAGE/game.json" --library fusion-runtime.js \
-    --package game.zip --out "$OUT/index.html"
+    --package game.zip --icon "$OUT/icon.png" --out "$OUT/index.html" --pwa
+  node scripts/write-pwa.mjs --manifest "$STAGE/game.json" --out "$OUT" \
+    --library fusion-runtime.js --package game.zip
   echo
   echo "Built $OUT: serve it over HTTP, for example:"
   echo "  npx --yes serve \"$OUT\""

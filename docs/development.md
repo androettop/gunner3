@@ -24,13 +24,16 @@ pinned checksum, into `game/`. `tools/fetch-soundfont.sh` does the same for
 music is played with; set `$SOUNDFONT` to use one you already have. Either input works: the
 installer from the game's own page, or the game inside it.
 
-The build takes a few seconds and writes three files into `build/`:
+The build takes a few seconds and writes into `build/`:
 
 | File | What it is |
 |---|---|
 | `fusion-runtime.js` | The runtime, as one ES module (1.0 MB) |
 | `game.zip` | Everything it plays: frames, events, images, audio (5.1 MB) |
 | `index.html` | A canvas and four lines of script |
+| `manifest.webmanifest` | What an installed app is: the game's name, its icon, fullscreen and landscape |
+| `sw.js` | A worker that keeps a copy of all of the above, so it plays with no network |
+| `icon*.png` | The icon the game's own executable wears, at the sizes a browser asks for |
 
 ```html
 <canvas id="game"></canvas>
@@ -40,10 +43,17 @@ The build takes a few seconds and writes three files into `build/`:
 </script>
 ```
 
-That is the whole public API. `./tools/package.sh --single-file` writes one HTML file instead,
-with the library and the package inside it as data URLs, which runs straight off the file
-system. `.github/workflows/build.yml` does all of this on every push and publishes to GitHub
-Pages.
+That is the whole public API. Everything else a build writes says the same things about the
+game that its package does, so another game's build says its own: the manifest is filled in from
+`game.json`, and the icons are the ones the unpacker read out of the executable. Only the
+colours and the shape of the window are the page's own, in `web/scripts/write-pwa.mjs`.
+
+`./tools/package.sh --single-file` writes one HTML file instead, with the library, the package
+and the icon inside it as data URLs, which runs straight off the file system. There is nothing
+to install in that one: a page off the file system gets no worker.
+
+`.github/workflows/build.yml` does all of this on every push and publishes to GitHub Pages, at
+the domain in `.github/pages/CNAME`.
 
 ## Working on the runtime
 
@@ -92,6 +102,10 @@ cargo run --release --manifest-path tools/unpack/Cargo.toml -- gunner3.exe game.
 ```
 
 It reads the format described in [mmf15-format.md](mmf15-format.md), checked field by field
-against a dump made by an unrelated program, with no mismatches. The music is MIDI, a score with
+against a dump made by an unrelated program, with no mismatches. It also reads the icon out of
+the executable's Windows resources — the game's own, not the installer's that carried it, which
+is why the file the game was found in comes back along with it. The sizes a web app manifest
+asks for are scaled from it by a whole number, at the nearest pixel, so a 32-pixel icon drawn in
+2005 is still that icon at 512. The music is MIDI, a score with
 no instruments in it, so packaging also cuts a General MIDI bank down to the 53 presets the
 game's fifteen tracks actually reach.

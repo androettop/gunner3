@@ -5,9 +5,10 @@
 # its music is played with are fetched the same way. Both downloads are cached, so they happen
 # once and every run after starts from the copies already on disk.
 #
-# A push to main also publishes that build to GitHub Pages, which is the demo. Nothing about
-# that changes what the repository holds: the game reaches the demo the same way it reaches a
-# build on your own machine, by being fetched at build time.
+# A push to main also publishes that build to GitHub Pages, which is the demo, at the domain
+# .github/pages/CNAME names. Nothing about that changes what the repository holds: the game
+# reaches the demo the same way it reaches a build on your own machine, by being fetched at
+# build time.
 name: Build
 
 on:
@@ -78,8 +79,15 @@ jobs:
             build-single/index.html
           retention-days: 14
 
-      # The page loads its library and its package by relative path, so it works from the
-      # subdirectory Pages serves a project site from without being told where it is.
+      # Pages reads the domain to serve the site under out of a CNAME file in what it is given,
+      # so the deploy is where that file belongs: it is the demo's, not the build's.
+      - name: Name the domain the demo is served under
+        if: github.ref == 'refs/heads/main'
+        run: cp .github/pages/CNAME build/CNAME
+
+      # The page loads its library, its package and its icons by relative path, and so do the
+      # manifest and the worker, so the build works wherever it is served from without being
+      # told where it is.
       - name: Package the build for Pages
         if: github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v3

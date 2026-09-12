@@ -18,7 +18,7 @@ The file formats were worked out by reverse engineering, with
 [NebulaFD](https://github.com/AITYunivers/NebulaFD) as references.
 
 <p align="center">
-  <a href="https://androettop.github.io/gunner3/">
+  <a href="https://gunner3.androetto.dev/">
     <img alt="Play it online"
          src="https://img.shields.io/badge/▶%20Play%20it%20online-2ea44f?style=for-the-badge">
   </a>

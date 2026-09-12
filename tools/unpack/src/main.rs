@@ -6,6 +6,7 @@ mod chunk;
 mod events;
 mod fonts;
 mod frames;
+mod icon;
 mod images;
 mod installer;
 mod json;
@@ -16,6 +17,7 @@ mod png;
 mod inflate;
 mod pe;
 
+use std::borrow::Cow;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
@@ -33,7 +35,7 @@ fn main() -> ExitCode {
         }
     };
 
-    let (chunks, header_runtime) = match read_game(&data) {
+    let (chunks, header_runtime, exe) = match read_game(&data) {
         Ok(found) => found,
         Err(e) => {
             eprintln!("{e}");
@@ -85,6 +87,14 @@ fn main() -> ExitCode {
     let images = chunks.iter().find(|c| c.id == 26214)
         .map(|c| images::read_bank(&c.data)).transpose().unwrap_or_default().unwrap_or_default();
 
+    // The icon comes out of the executable the game was found in, which is the game's own and
+    // not the installer's that carried it here.
+    let icon = icon::read(&exe);
+    match &icon {
+        Some(icon) => println!("icon: {}x{}", icon.width, icon.height),
+        None => println!("icon: none in the executable"),
+    }
+
     let header = chunks.iter().find(|c| c.id == 8739).map(|c| c.data.clone()).unwrap_or_default();
     let text_of = |id: u16| chunks.iter().find(|c| c.id == id)
         .map(|c| {
@@ -132,6 +142,24 @@ fn main() -> ExitCode {
             Err(e) => eprintln!("image {}: {e}", image.handle),
         }
     }
+    // A package carries the game's face along with its data: the icon as the executable wears
+    // it, for a page to use as its own, and the two sizes a web app manifest asks for. The
+    // maskable one keeps to the middle of its square, since a phone may round or crop the rest.
+    if let Some(icon) = &icon {
+        let draw = |name: &str, size: u32, rgba: Vec<u8>, package: &mut zip::Zip| {
+            match png::encode(size, size, &rgba) {
+                Ok(bytes) => add(name.into(), &bytes, package),
+                Err(e) => eprintln!("{name}: {e}"),
+            }
+        };
+        match png::encode(icon.width, icon.height, &icon.rgba) {
+            Ok(bytes) => add("icon.png".into(), &bytes, &mut package),
+            Err(e) => eprintln!("icon.png: {e}"),
+        }
+        draw("icons/192.png", 192, icon::fitted(icon, 192, 192, [0, 0, 0, 0]), &mut package);
+        draw("icons/512.png", 512, icon::fitted(icon, 512, 512, [0, 0, 0, 0]), &mut package);
+        draw("icons/maskable.png", 512, icon::fitted(icon, 512, 320, MASKABLE_BACKGROUND), &mut package);
+    }
     for sound in &sounds {
         add(format!("sounds/{}.wav", sound.handle), &sound.wav, &mut package);
     }
@@ -150,23 +178,29 @@ fn main() -> ExitCode {
 }
 
 /// Reads a game out of a file, whether that file is the game or the installer holding it.
-fn read_game(data: &[u8]) -> Result<(Vec<chunk::Chunk>, (u16, u16, u32)), String> {
+///
+/// The executable the game turned up in comes back with it: it is the game's own, whatever was
+/// opened here, and it is where the icon is read from.
+fn read_game(data: &[u8]) -> Result<(Vec<chunk::Chunk>, (u16, u16, u32), Cow<'_, [u8]>), String> {
     match game_chunks(data) {
-        Ok(chunks) => return Ok(chunks),
+        Ok((chunks, version)) => return Ok((chunks, version, Cow::Borrowed(data))),
         Err(first) => {
             let Some(start) = pe::appended_offset(data) else { return Err(first) };
             println!("not a game; reading it as an installer");
             let files = installer::unpack(data, start)?;
             println!("  {} files inside", files.len());
-            for file in &files {
-                if let Ok(chunks) = game_chunks(file) {
-                    return Ok(chunks);
+            for file in files {
+                if let Ok((chunks, version)) = game_chunks(&file) {
+                    return Ok((chunks, version, Cow::Owned(file)));
                 }
             }
             Err("the installer held no Clickteam game".into())
         }
     }
 }
+
+/// What a maskable icon sits on, which is the same black the page is.
+const MASKABLE_BACKGROUND: [u8; 4] = [0, 0, 0, 255];
 
 /// The chunks of a game: past the executable, past the pack data if there is any, past the
 /// header that says what built it.
